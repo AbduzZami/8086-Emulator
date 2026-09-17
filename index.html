@@ -63,7 +63,20 @@
   .regRow2 input{background:var(--panel2);border:1px solid var(--border);color:var(--accent);text-align:center;padding:3px 2px;border-radius:3px;}
 
   .flagsGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:11px;}
-  .flagChip{background:var(--panel2);border:1px solid var(--border);border-radius:4px;text-align:center;padding:4px 2px;color:var(--dim);}
+  .regModeToggle{display:flex;gap:6px;padding:10px 12px 0;}
+  .regModeBtn.active{background:var(--accent);color:#04201a;border-color:var(--accent);font-weight:bold;}
+  .fpuNote{color:var(--dim);font-size:11px;line-height:1.5;margin:0;}
+  .fpuNote code{color:var(--accent2);}
+  #fpuRegView input[readonly]{opacity:.7;cursor:default;}
+  #fpuCtrlRegs{grid-template-columns:70px 1fr;}
+  #aluInfo{grid-template-columns:100px 1fr;}
+  #aluInfo .lbl{font-size:10.5px;}
+  #aluInfo input{color:var(--accent);font-size:11px;letter-spacing:0.2px;}
+  #aluInfo input.aluText{color:var(--text);text-align:left;padding-left:8px;font-size:12px;}
+  .flagsGrid .flagChip.aluHit{border-color:var(--accent2);color:var(--accent2);font-weight:bold;}
+  .flagChip{background:var(--panel2);border:1px solid var(--border);border-radius:4px;text-align:center;padding:4px 2px;color:var(--dim);display:flex;flex-direction:column;gap:1px;}
+  .flagChip .fname{font-size:10px;}
+  .flagChip .fval{font-size:12px;font-weight:bold;}
   .flagChip.on{color:var(--accent2);border-color:var(--accent2);}
 
   .toolRow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--panel2);}
@@ -97,6 +110,12 @@
   table.memhex td:nth-child(4){color:var(--accent2);letter-spacing:.5px;}
   table.memhex tr.changed td{background:var(--hl);font-weight:bold;}
   table.memhex tr.changed td:nth-child(2){color:#ffce7a;}
+  table.memhex tr{cursor:pointer;}
+  table.memhex tr.selected td{background:#4a3f14;}
+  table.memhex tr.selected td:first-child{color:#ffe27a;font-weight:bold;}
+  .memSelBox{background:var(--panel2);border:1px solid var(--accent2);color:var(--accent2);
+    padding:4px 12px;border-radius:4px;font-family:'Courier New',monospace;font-size:13px;
+    font-weight:bold;letter-spacing:.5px;margin-left:auto;}
   .miniBtn{padding:2px 7px;font-size:10px;}
 
   #screenOut{white-space:pre-wrap;background:#000;color:#7CFC7C;padding:10px;min-height:120px;border-radius:4px;font-size:13px;border:1px solid var(--border);}
@@ -150,17 +169,55 @@
 
     <div id="emuView" class="view">
       <div class="col colLeft">
-        <div class="panel">
-          <h3>Registers</h3>
-          <div class="regGrid" id="regGrid16"></div>
+        <div class="regModeToggle">
+          <button class="btn regModeBtn active" id="btnRegCPU" data-mode="cpu">CPU</button>
+          <button class="btn regModeBtn" id="btnRegALU" data-mode="alu">ALU</button>
+          <button class="btn regModeBtn" id="btnRegFPU" data-mode="fpu">FPU</button>
         </div>
-        <div class="panel">
-          <h3>Pointers &amp; Segments</h3>
-          <div class="regRow2" id="regGridSeg"></div>
+        <div id="cpuRegView">
+          <div class="panel">
+            <h3>Registers</h3>
+            <div class="regGrid" id="regGrid16"></div>
+          </div>
+          <div class="panel">
+            <h3>Pointers &amp; Segments</h3>
+            <div class="regRow2" id="regGridSeg"></div>
+          </div>
+          <div class="panel">
+            <h3>Flags</h3>
+            <div class="flagsGrid" id="flagsGrid"></div>
+          </div>
         </div>
-        <div class="panel">
-          <h3>Flags</h3>
-          <div class="flagsGrid" id="flagsGrid"></div>
+        <div id="aluRegView" style="display:none">
+          <div class="panel">
+            <h3>ALU &mdash; last operation</h3>
+            <div class="regRow2 aluRow2" id="aluInfo"></div>
+          </div>
+          <div class="panel">
+            <h3>Flags affected</h3>
+            <div class="flagsGrid" id="aluFlagsGrid"></div>
+          </div>
+          <div class="panel">
+            <p class="fpuNote">Updates after each arithmetic, logic, shift/rotate, multiply or
+              divide instruction &mdash; it holds its last value through <code>MOV</code>,
+              jumps, etc. so it doesn't clear between steps.</p>
+          </div>
+        </div>
+        <div id="fpuRegView" style="display:none">
+          <div class="panel">
+            <h3>FPU Registers (ST0&ndash;ST7)</h3>
+            <div class="regGrid" id="fpuStRegs"></div>
+          </div>
+          <div class="panel">
+            <h3>FPU Control / Status / Tag</h3>
+            <div class="regRow2" id="fpuCtrlRegs"></div>
+          </div>
+          <div class="panel">
+            <p class="fpuNote">This is an 8086 (no built-in FPU); an 8087 coprocessor is
+              never present unless a program checks for one. These registers show the
+              post-<code>FINIT</code> reset state for reference &mdash; x87 instructions
+              (<code>FLD</code>, <code>FADD</code>, &hellip;) aren't executed.</p>
+          </div>
         </div>
       </div>
 
@@ -198,10 +255,12 @@
             <label>Address</label>
             <input type="text" id="memAddrInput" maxlength="5" value="00000" style="width:70px;">
             <button class="btn" id="memGoBtn">Go</button>
+            <button class="btn" id="memCodeBtn">Code</button>
             <button class="btn" id="memDataBtn">Data</button>
             <button class="btn" id="memStackBtn">Stack</button>
             <button class="btn" id="memPrevBtn">&#9650; Prev</button>
             <button class="btn" id="memNextBtn">Next &#9660;</button>
+            <span class="memSelBox" id="memSelBox">0000:0000</span>
           </div>
           <div class="memWrap">
             <table class="memhex" id="memTable">
@@ -324,70 +383,43 @@ function tryParseNumber(tok) {
    0xFFFF within their segment (the classic 8086 behaviour), and the
    resulting physical address wraps at 0x100000 (1MB).
 
-   Segment layout mirrors a real DOS ".MODEL small" load, and is genuinely
-   calculated from the assembled program rather than fixed: a DOS loader
-   places the PSP (always exactly 0x10 paragraphs = 256 bytes) first, then
-   CODE, then DATA, then STACK, each starting on the next free paragraph
-   right after the one before it. computeSegments() below does exactly
-   that using the program's own estimated code size and actual data size,
-   so CS/DS/SS genuinely move as the program grows — they are not the same
-   segment (CS != DS), matching how a small-model program is really laid
-   out (and why the reference emu8086 shows CS=0721h while DS/ES=0700h and
-   SS=0710h for its sample program). ES defaults to the same paragraph as
-   DS (the common case when a program never re-points it), and memory
-   initialization (DB/DW bytes) is written relative to DS at load time,
-   before any instruction runs — exactly like a real loader copies the
-   DATA segment's initial contents into place before the program's own
-   code gets a chance to execute. CS itself is only ever displayed here
-   (this simulator executes by instruction index rather than fetching real
-   opcode bytes via CS:IP), so its value carries no addressing behaviour —
-   only DS and SS are ever used to resolve a memory operand's physical
-   address. DEFAULT_CS/DS/ES/SS below are only a fallback, used when a CPU
-   is constructed directly without going through computeSegments(). */
-const DEFAULT_CS = 0x0721, DEFAULT_DS = 0x0700, DEFAULT_ES = 0x0700, DEFAULT_SS = 0x0710;
-const DEFAULT_PSP_BASE = 0x0700; // conventional first paragraph for a loaded .COM/.EXE-style program
-const PSP_PARAGRAPHS = 0x10;     // PSP is always exactly 256 bytes = 0x10 paragraphs
+   CS/SS/DS/ES are derived from the program's own stack/data size, following
+   exactly how a real DOS ".MODEL small" loader lays memory out — verified
+   byte-for-byte against real emu8086 (its raw CS-memory dump for a "Hello
+   World" program starts with the bytes BA 20 07 8E DA ..., i.e. "MOV DX,
+   0720h" / "MOV DS, DX", which only makes sense if DS ends up at 0720h):
+
+     PSP_BASE = 0700h                         (fixed: where DOS loads the PSP)
+     SS       = PSP_BASE + 10h                (= 0710h: PSP is always 100h/10 paragraphs)
+     DS       = SS + ceil(stackSizeBytes/16)  (= 0720h for the default 100h-byte stack)
+     CS       = DS + ceil(dataSizeBytes/16)   (= 0721h for a 12-byte "Hello World$" DATA)
+     ES       = PSP_BASE                      (= 0700h)
+
+   stackSizeBytes (the .STACK directive, default 100h) and dataSizeBytes (the
+   DATA segment's actual byte count) are both already known exactly by the
+   time assemble() finishes, so this is an exact placement, not an estimate.
+
+   DS itself is NOT simply preset to its final value, though: on a real DOS
+   ".MODEL small" load, the loader points DS (and ES) at the PSP first, and
+   it's the program's own auto-generated startup code that then loads DS with
+   the actual DATA segment value — assemble() below auto-inserts exactly that
+   startup pair ("MOV DX, <DS>h" / "MOV DS, DX") as real, steppable
+   instructions at the very start of every program, before the user's own
+   code. So a fresh CPU starts with DS equal to ES (both pointing at the PSP —
+   the true DOS-loader state), and DS visibly changes to its real DATA-segment
+   value the moment that startup code runs — matching real emu8086. ES has no
+   such fixup instruction (emu8086 doesn't emit one either unless a program
+   uses ES), so it stays at PSP_BASE throughout. */
+const PSP_BASE = 0x0700;
+const DEFAULT_CS = 0x0721, DEFAULT_DS = 0x0720, DEFAULT_ES = 0x0700, DEFAULT_SS = 0x0710;
 const MEM_SIZE = 0x100000; // 00000h .. FFFFFh
 
-/* Genuinely compute CS/DS/ES/SS from the assembled program's own size, the way a real
-   DOS loader would lay PSP -> CODE -> DATA -> STACK out in memory, each segment starting
-   on the paragraph immediately after the previous one. codeSizeBytes/dataSizeBytes come
-   from assemble()'s estimate of the program's actual code and data size. */
-function computeSegments(codeSizeBytes, dataSizeBytes, pspBase) {
-  const psp = (pspBase == null ? DEFAULT_PSP_BASE : pspBase) & 0xFFFF;
-  const cs = (psp + PSP_PARAGRAPHS) & 0xFFFF;
-  const codeParas = Math.ceil((codeSizeBytes || 0) / 16);
-  const ds = (cs + codeParas) & 0xFFFF;
-  const dataParas = Math.ceil((dataSizeBytes || 0) / 16);
-  const ss = (ds + dataParas) & 0xFFFF;
-  const es = ds;
-  return { psp, cs, ds, es, ss };
-}
-
-/* Heuristic byte-length estimate for one parsed instruction. This simulator executes by
-   instruction index rather than encoding real opcode bytes, so this is not a cycle-accurate
-   disassembler-grade size — it's a realistic approximation (opcode + mod/rm + displacement/
-   immediate bytes) good enough to make CS/DS/SS genuinely reflect how big the program is. */
-const SHORT_JUMP_OPS = new Set(['JE','JZ','JNE','JNZ','JG','JNLE','JGE','JNL','JL','JNGE','JLE','JNG',
-  'JA','JNBE','JAE','JNB','JB','JNAE','JBE','JNA','JC','JNC','JO','JNO','JS','JNS','JP','JPE','JNP','JPO',
-  'LOOP','LOOPE','LOOPZ','LOOPNE','LOOPNZ']);
-const NO_OPERAND_OPS = new Set(['NOP','PUSHF','POPF','CLC','STC','CMC','CLD','STD','CLI','STI',
-  'RET','RETN','RETF']);
-function estimateInstrSize(instr) {
-  const op = instr.op;
-  if (NO_OPERAND_OPS.has(op)) return 1;
-  if (op === 'INT') return 2;               // INT imm8
-  if (SHORT_JUMP_OPS.has(op)) return 2;      // short rel8
-  if (op === 'JMP' || op === 'CALL') return 3; // near, rel16
-  let size = 1; // opcode byte
-  let sawModRm = false;
-  for (const a of (instr.args || [])) {
-    if (a.type === 'reg') { if (!sawModRm) { size += 1; sawModRm = true; } }
-    else if (a.type === 'mem') { size += sawModRm ? 2 : 3; sawModRm = true; } // mod/rm + disp16
-    else if (a.type === 'imm') { size += (a.size === 2 ? 2 : 1); }
-    else if (a.type === 'label') { size += 2; }
-  }
-  return Math.max(size, 2);
+function computeSegments(stackSizeBytes, dataSizeBytes) {
+  const ss = PSP_BASE + 0x10;
+  const ds = ss + Math.ceil((stackSizeBytes || 0) / 16);
+  const cs = ds + Math.ceil((dataSizeBytes || 0) / 16);
+  const es = PSP_BASE;
+  return { cs, ss, ds, es };
 }
 
 class CPU {
@@ -404,8 +436,25 @@ class CPU {
     this.inputPos = 0;
     this.errorMsg = null;
     this.recordLog = null; // when an array, writeSeg()/writePhys() push {addr, old} undo entries here
+    this.lastAlu = null;   // {op, size, a, b, result, remainder?, text} from the most recent
+                            // arithmetic/logic/shift/rotate/mul/div instruction — for the ALU panel
   }
 }
+
+/* Which flags a given ALU instruction actually writes, for the ALU panel's "flags affected"
+   readout. NOT/DIV/IDIV leave flags undefined on a real 8086, so they're listed as affecting
+   none (matching how this engine implements them, i.e. it doesn't touch flags for them either). */
+const ALU_FLAGS_AFFECTED = {
+  ADD: ['CF','PF','AF','ZF','SF','OF'], ADC: ['CF','PF','AF','ZF','SF','OF'],
+  SUB: ['CF','PF','AF','ZF','SF','OF'], SBB: ['CF','PF','AF','ZF','SF','OF'],
+  CMP: ['CF','PF','AF','ZF','SF','OF'],
+  INC: ['PF','AF','ZF','SF','OF'], DEC: ['PF','AF','ZF','SF','OF'], NEG: ['CF','PF','AF','ZF','SF','OF'],
+  AND: ['CF','PF','ZF','SF','OF'], OR: ['CF','PF','ZF','SF','OF'], XOR: ['CF','PF','ZF','SF','OF'],
+  TEST: ['CF','PF','ZF','SF','OF'], NOT: [],
+  SHL: ['CF','PF','ZF','SF'], SAL: ['CF','PF','ZF','SF'], SHR: ['CF','PF','ZF','SF'], SAR: ['CF','PF','ZF','SF'],
+  ROL: ['CF'], ROR: ['CF'],
+  MUL: ['CF','OF'], IMUL: ['CF','OF'], DIV: [], IDIV: []
+};
 
 /* physical-address helpers */
 function segBase(cpu, segName) { return (cpu.reg[segName] & 0xFFFF) << 4; } // 0 .. 0xFFFF0
@@ -582,6 +631,7 @@ function parseOperand(raw, ctx) {
     }
     return {
       type: 'mem', size: sizeOverride || 2, text: raw, seg: usesBP ? 'SS' : 'DS',
+      regs, baseAddr,
       calcAddress: (cpu) => {
         let addr = baseAddr;
         for (const r of regs) addr += r.sign * getReg(cpu, r.reg);
@@ -609,7 +659,7 @@ function parseOperand(raw, ctx) {
         }
       }
       const addr = (info.address + disp) & 0xFFFF;
-      return { type: 'mem', size: sizeOverride || info.size, text: raw, seg: 'DS', calcAddress: () => addr };
+      return { type: 'mem', size: sizeOverride || info.size, text: raw, seg: 'DS', regs: [], baseAddr: addr, calcAddress: () => addr };
     }
   }
   // immediate number / char / equ constant
@@ -622,6 +672,245 @@ function parseOperand(raw, ctx) {
   }
   // otherwise treat as a code label (used by jmp/call/loop resolution elsewhere)
   return { type: 'label', name: s, text: raw };
+}
+
+/* ==================================================================
+   REAL 8086 OPCODE ENCODER
+   Produces genuine machine-code bytes (ModRM, displacement, immediate —
+   the same encoding a real assembler/emu8086 would emit) for the Memory
+   tab's Code view. Purely a display concern: execStep() above still runs
+   by instruction index, not by fetching these bytes — this only makes
+   sure the bytes sitting in CS:xxxx are the real ones a learner would see
+   in emu8086's own memory dump.
+   ================================================================== */
+const REG16_CODE = { AX: 0, CX: 1, DX: 2, BX: 3, SP: 4, BP: 5, SI: 6, DI: 7 };
+const REG8_CODE  = { AL: 0, CL: 1, DL: 2, BL: 3, AH: 4, CH: 5, DH: 6, BH: 7 };
+const SEG_CODE   = { ES: 0, CS: 1, SS: 2, DS: 3 };
+function isSegRegName(n) { return SEG_CODE.hasOwnProperty(n); }
+function regFieldCode(operand) {
+  if (isSegRegName(operand.name)) return SEG_CODE[operand.name];
+  return operand.size === 1 ? REG8_CODE[operand.name] : REG16_CODE[operand.name];
+}
+function immBytes(val, size) {
+  const v = val & (size === 1 ? 0xFF : 0xFFFF);
+  return size === 1 ? [v] : [v & 0xFF, (v >> 8) & 0xFF];
+}
+function encodeMemModRM(mem, regField) {
+  const regs = mem.regs || [];
+  const baseAddr = mem.baseAddr || 0;
+  if (regs.length === 0) {
+    const addr16 = baseAddr & 0xFFFF;
+    return [(0 << 6) | (regField << 3) | 6, addr16 & 0xFF, (addr16 >> 8) & 0xFF];
+  }
+  const rmMap2 = { 'BX+SI': 0, 'BX+DI': 1, 'BP+SI': 2, 'BP+DI': 3 };
+  const rmMap1 = { SI: 4, DI: 5, BP: 6, BX: 7 };
+  let rm;
+  if (regs.length === 2) {
+    const key = regs.map(r => r.reg).slice().sort().join('+');
+    if (!(key in rmMap2)) throw new Error('Unsupported addressing combination [' + key + ']');
+    rm = rmMap2[key];
+  } else if (regs.length === 1 && regs[0].reg in rmMap1) {
+    rm = rmMap1[regs[0].reg];
+  } else {
+    throw new Error('Unsupported addressing mode');
+  }
+  const d16 = baseAddr & 0xFFFF;
+  const signedD = d16 > 0x7FFF ? d16 - 0x10000 : d16;
+  let mod, extra = [];
+  if (rm === 6 && signedD === 0) { mod = 1; extra = [0]; }
+  else if (signedD === 0) { mod = 0; }
+  else if (signedD >= -128 && signedD <= 127) { mod = 1; extra = [signedD & 0xFF]; }
+  else { mod = 2; extra = [d16 & 0xFF, (d16 >> 8) & 0xFF]; }
+  return [(mod << 6) | (regField << 3) | rm, ...extra];
+}
+function rmBytes(operand, regField) {
+  if (operand.type === 'reg') {
+    const rmCode = regFieldCode(operand);
+    return [(0b11 << 6) | (regField << 3) | rmCode];
+  }
+  if (operand.type === 'mem') return encodeMemModRM(operand, regField);
+  throw new Error('operand is not reg/mem: ' + (operand.text || operand.name));
+}
+
+function encodeMov(a, b) {
+  if (b.type === 'imm' && a.type === 'reg' && !isSegRegName(a.name)) {
+    const base = a.size === 1 ? 0xB0 : 0xB8;
+    return [base + regFieldCode(a), ...immBytes(b.value, a.size)];
+  }
+  if (b.type === 'imm' && a.type === 'mem') {
+    const opc = a.size === 1 ? 0xC6 : 0xC7;
+    return [opc, ...rmBytes(a, 0), ...immBytes(b.value, a.size)];
+  }
+  if (a.type === 'reg' && isSegRegName(a.name)) return [0x8E, ...rmBytes(b, SEG_CODE[a.name])];
+  if (b.type === 'reg' && isSegRegName(b.name)) return [0x8C, ...rmBytes(a, SEG_CODE[b.name])];
+  if (a.type === 'mem') { const opc = a.size === 1 ? 0x88 : 0x89; return [opc, ...rmBytes(a, regFieldCode(b))]; }
+  if (b.type === 'mem') { const opc = a.size === 1 ? 0x8A : 0x8B; return [opc, ...rmBytes(b, regFieldCode(a))]; }
+  const opc = a.size === 1 ? 0x88 : 0x89;
+  return [opc, ...rmBytes(a, regFieldCode(b))];
+}
+function encodeLea(a, b) { return [0x8D, ...rmBytes(b, REG16_CODE[a.name])]; }
+function encodeXchg(a, b) {
+  if (a.type === 'reg' && a.name === 'AX' && b.type === 'reg') return [0x90 + REG16_CODE[b.name]];
+  if (b.type === 'reg' && b.name === 'AX' && a.type === 'reg') return [0x90 + REG16_CODE[a.name]];
+  if (a.type === 'mem') { const opc = a.size === 1 ? 0x86 : 0x87; return [opc, ...rmBytes(a, regFieldCode(b))]; }
+  if (b.type === 'mem') { const opc = b.size === 1 ? 0x86 : 0x87; return [opc, ...rmBytes(b, regFieldCode(a))]; }
+  const opc = a.size === 1 ? 0x86 : 0x87;
+  return [opc, ...rmBytes(a, regFieldCode(b))];
+}
+const GROUP1_EXT = { ADD: 0, OR: 1, ADC: 2, SBB: 3, AND: 4, SUB: 5, XOR: 6, CMP: 7 };
+function encodeGroup1(op, a, b) {
+  const ext = GROUP1_EXT[op];
+  if (b.type === 'imm') {
+    if (a.type === 'reg' && a.name === 'AL' && a.size === 1) return [ext * 8 + 4, ...immBytes(b.value, 1)];
+    if (a.type === 'reg' && a.name === 'AX' && a.size === 2) return [ext * 8 + 5, ...immBytes(b.value, 2)];
+    const opc = a.size === 1 ? 0x80 : 0x81;
+    return [opc, ...rmBytes(a, ext), ...immBytes(b.value, a.size)];
+  }
+  if (b.type === 'mem') { const opc = ext * 8 + (a.size === 1 ? 2 : 3); return [opc, ...rmBytes(b, regFieldCode(a))]; }
+  if (a.type === 'mem') { const opc = ext * 8 + (b.size === 1 ? 0 : 1); return [opc, ...rmBytes(a, regFieldCode(b))]; }
+  const opc = ext * 8 + (a.size === 1 ? 0 : 1);
+  return [opc, ...rmBytes(a, regFieldCode(b))];
+}
+function encodeTest(a, b) {
+  if (b.type === 'imm') {
+    const opc = a.size === 1 ? 0xF6 : 0xF7;
+    return [opc, ...rmBytes(a, 0), ...immBytes(b.value, a.size)];
+  }
+  if (a.type === 'mem') return [(a.size === 1 ? 0x84 : 0x85), ...rmBytes(a, regFieldCode(b))];
+  if (b.type === 'mem') return [(b.size === 1 ? 0x84 : 0x85), ...rmBytes(b, regFieldCode(a))];
+  return [(a.size === 1 ? 0x84 : 0x85), ...rmBytes(a, regFieldCode(b))];
+}
+const UNARY_EXT = { NOT: 2, NEG: 3, MUL: 4, IMUL: 5, DIV: 6, IDIV: 7 };
+function encodeUnaryF6F7(op, a) {
+  const opc = a.size === 1 ? 0xF6 : 0xF7;
+  return [opc, ...rmBytes(a, UNARY_EXT[op])];
+}
+function encodeIncDec(op, a) {
+  if (a.type === 'reg' && a.size === 2 && !isSegRegName(a.name)) {
+    const base = op === 'INC' ? 0x40 : 0x48;
+    return [base + REG16_CODE[a.name]];
+  }
+  const opc = a.size === 1 ? 0xFE : 0xFF;
+  return [opc, ...rmBytes(a, op === 'INC' ? 0 : 1)];
+}
+const SHIFT_EXT = { ROL: 0, ROR: 1, SHL: 4, SAL: 4, SHR: 5, SAR: 7 };
+function encodeShift(op, a, b) {
+  const ext = SHIFT_EXT[op];
+  if (!b) { const opc = a.size === 1 ? 0xD0 : 0xD1; return [opc, ...rmBytes(a, ext)]; }
+  if (b.type === 'reg' && b.name === 'CL') { const opc = a.size === 1 ? 0xD2 : 0xD3; return [opc, ...rmBytes(a, ext)]; }
+  const opc = a.size === 1 ? 0xC0 : 0xC1;
+  return [opc, ...rmBytes(a, ext), (b.value !== undefined ? b.value : 1) & 0xFF];
+}
+const SEG_PUSH = { ES: 0x06, CS: 0x0E, SS: 0x16, DS: 0x1E };
+const SEG_POP  = { ES: 0x07, SS: 0x17, DS: 0x1F };
+function encodePush(a) {
+  if (a.type === 'reg' && isSegRegName(a.name)) return [SEG_PUSH[a.name]];
+  if (a.type === 'reg') return [0x50 + REG16_CODE[a.name]];
+  if (a.type === 'mem') return [0xFF, ...rmBytes(a, 6)];
+  if (a.type === 'imm') return [0x68, ...immBytes(a.value, 2)];
+  throw new Error('bad PUSH operand');
+}
+function encodePop(a) {
+  if (a.type === 'reg' && isSegRegName(a.name)) return [SEG_POP[a.name]];
+  if (a.type === 'reg') return [0x58 + REG16_CODE[a.name]];
+  if (a.type === 'mem') return [0x8F, ...rmBytes(a, 0)];
+  throw new Error('bad POP operand');
+}
+
+function encodeNonJump(instr) {
+  const op = instr.op, args = instr.args, a = args[0], b = args[1];
+  switch (op) {
+    case 'MOV': return encodeMov(a, b);
+    case 'LEA': return encodeLea(a, b);
+    case 'XCHG': return encodeXchg(a, b);
+    case 'ADD': case 'OR': case 'ADC': case 'SBB': case 'AND': case 'SUB': case 'XOR': case 'CMP':
+      return encodeGroup1(op, a, b);
+    case 'TEST': return encodeTest(a, b);
+    case 'NOT': case 'NEG': case 'MUL': case 'IMUL': case 'DIV': case 'IDIV':
+      return encodeUnaryF6F7(op, a);
+    case 'INC': case 'DEC': return encodeIncDec(op, a);
+    case 'SHL': case 'SAL': case 'SHR': case 'SAR': case 'ROL': case 'ROR':
+      return encodeShift(op, a, b);
+    case 'PUSH': return encodePush(a);
+    case 'POP': return encodePop(a);
+    case 'PUSHF': return [0x9C];
+    case 'POPF': return [0x9D];
+    case 'RET': case 'RETN': return a ? [0xC2, ...immBytes(a.value, 2)] : [0xC3];
+    case 'RETF': return a ? [0xCA, ...immBytes(a.value, 2)] : [0xCB];
+    case 'NOP': return [0x90];
+    case 'CLC': return [0xF8]; case 'STC': return [0xF9]; case 'CMC': return [0xF5];
+    case 'CLD': return [0xFC]; case 'STD': return [0xFD]; case 'CLI': return [0xFA]; case 'STI': return [0xFB];
+    case 'INT': return [0xCD, a.value & 0xFF];
+    default: return null; // jump-type (handled by jumpLen/encodeJumpAt) or unrecognized
+  }
+}
+
+const JCC_CODE = {
+  JO: 0, JNO: 1, JB: 2, JC: 2, JNAE: 2, JAE: 3, JNB: 3, JNC: 3, JE: 4, JZ: 4, JNE: 5, JNZ: 5,
+  JBE: 6, JNA: 6, JA: 7, JNBE: 7, JS: 8, JNS: 9, JP: 10, JPE: 10, JNP: 11, JPO: 11,
+  JL: 12, JNGE: 12, JGE: 13, JNL: 13, JLE: 14, JNG: 14, JG: 15, JNLE: 15
+};
+const LOOP_OPC = { LOOP: 0xE2, LOOPE: 0xE1, LOOPZ: 0xE1, LOOPNE: 0xE0, LOOPNZ: 0xE0 };
+function jumpLen(op) {
+  if (op === 'JMP' || op === 'CALL') return 3;
+  if (op in LOOP_OPC || op in JCC_CODE) return 2;
+  return 0;
+}
+function signedRel8(v) {
+  v = ((v % 0x10000) + 0x10000) % 0x10000;
+  let sv = v > 0x7FFF ? v - 0x10000 : v;
+  // Real 8086 Jcc/LOOP only carry an 8-bit displacement; a program whose branch
+  // target is farther than that would need restructuring on real hardware too.
+  // Clamp here (rather than throw) so an otherwise-valid teaching program still
+  // gets a Code view instead of losing the feature entirely.
+  if (sv < -128) sv = -128;
+  if (sv > 127) sv = 127;
+  return sv & 0xFF;
+}
+function encodeJumpAt(op, fromAddr, targetAddr) {
+  if (op === 'JMP') { const rel = (targetAddr - (fromAddr + 3)) & 0xFFFF; return [0xE9, rel & 0xFF, (rel >> 8) & 0xFF]; }
+  if (op === 'CALL') { const rel = (targetAddr - (fromAddr + 3)) & 0xFFFF; return [0xE8, rel & 0xFF, (rel >> 8) & 0xFF]; }
+  if (op in LOOP_OPC) return [LOOP_OPC[op], signedRel8(targetAddr - (fromAddr + 2))];
+  if (op in JCC_CODE) return [0x70 + JCC_CODE[op], signedRel8(targetAddr - (fromAddr + 2))];
+  return [0x90];
+}
+
+/* Two-pass: instruction byte lengths never depend on where a jump target ends up (only
+   fixed-size near/short forms are used), so a single forward pass gives exact addresses;
+   a second pass then fills in real displacement bytes for jump/call/loop instructions now
+   that every label's address is known. */
+function encodeProgram(instructions, labels) {
+  const n = instructions.length;
+  const lens = new Array(n);
+  const nonJumpBytes = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const jl = jumpLen(instructions[i].op);
+    if (jl) { lens[i] = jl; continue; }
+    let bytes;
+    try { bytes = encodeNonJump(instructions[i]); } catch (e) { bytes = null; }
+    if (!bytes || !bytes.length) bytes = [0x90];
+    nonJumpBytes[i] = bytes;
+    lens[i] = bytes.length;
+  }
+  const addr = new Array(n + 1);
+  addr[0] = 0;
+  for (let i = 0; i < n; i++) addr[i + 1] = addr[i] + lens[i];
+  const total = addr[n];
+  const bytes = new Uint8Array(total);
+  for (let i = 0; i < n; i++) {
+    const op = instructions[i].op;
+    let ib;
+    if (jumpLen(op)) {
+      const target = instructions[i].args[0] && instructions[i].args[0].name;
+      const targetIdx = (target !== undefined && labels.hasOwnProperty(target)) ? labels[target] : i + 1;
+      const targetAddr = addr[targetIdx] !== undefined ? addr[targetIdx] : addr[i];
+      ib = encodeJumpAt(op, addr[i], targetAddr);
+    } else {
+      ib = nonJumpBytes[i];
+    }
+    for (let k = 0; k < ib.length && k < lens[i]; k++) bytes[addr[i] + k] = ib[k];
+  }
+  return { bytes, instrAddr: addr.slice(0, n), instrLen: lens, totalLen: total };
 }
 
 /* ---------------- main assemble() ---------------- */
@@ -717,14 +1006,33 @@ function assemble(source, opts) {
   // Expand .EXIT into MOV/INT pseudo-instructions, build final instruction list + label map
   const instructions = [];
   const labels = {};
+
+  // Segments are placed exactly like a real DOS ".MODEL small" load (see computeSegments'
+  // doc comment above): PSP at 0700h, SS right after it, DS after the stack, CS after DATA.
+  const segs = computeSegments(stackSize, cursorRef.addr);
+
+  // Auto-generated DOS ".MODEL small" startup preamble: a real DOS loader points DS (and ES)
+  // at the PSP, not at DATA, so every small-model program's own compiled startup code begins
+  // with exactly this — load DX with the DATA segment paragraph, then load DS from DX (you
+  // can't MOV a segment register from an immediate directly on the 8086). This runs before
+  // the user's own first instruction, is fully visible/steppable like any other instruction,
+  // and is why DS visibly changes value the first time you step through any program.
+  const dsHex = segs.ds.toString(16).toUpperCase().padStart(4, '0') + 'h';
+  instructions.push({ op: 'MOV', argsRaw: 'DX, ' + dsHex, lineNo: 0, raw: '', synthetic: true });
+  instructions.push({ op: 'MOV', argsRaw: 'DS, DX', lineNo: 0, raw: '', synthetic: true });
+
   for (const cl of codeLines) {
     if (cl.label) labels[cl.label] = instructions.length;
     if (cl.op === null) continue;
     if (cl.op === '.EXIT') {
       if (cl.argsRaw.trim() !== '') {
         instructions.push({ op: 'MOV', argsRaw: 'AL, ' + cl.argsRaw.trim(), lineNo: cl.lineNo, raw: cl.raw });
+        instructions.push({ op: 'MOV', argsRaw: 'AH, 4Ch', lineNo: cl.lineNo, raw: cl.raw });
+      } else {
+        // No explicit exit code: matches real emu8086's own ".EXIT" expansion, which loads
+        // AX with both halves (AH=4Ch, AL=00h) in a single instruction rather than two.
+        instructions.push({ op: 'MOV', argsRaw: 'AX, 4C00h', lineNo: cl.lineNo, raw: cl.raw });
       }
-      instructions.push({ op: 'MOV', argsRaw: 'AH, 4Ch', lineNo: cl.lineNo, raw: cl.raw });
       instructions.push({ op: 'INT', argsRaw: '21h', lineNo: cl.lineNo, raw: cl.raw });
       continue;
     }
@@ -784,14 +1092,12 @@ function assemble(source, opts) {
     throw e;
   }
 
-  // Genuine (estimated) code/data size, used to compute where CS/DS/SS actually land in
-  // memory — see computeSegments(). dataSizeBytes is simply the final data cursor, since
-  // the DATA segment starts at offset 0.
-  let codeSizeBytes = 0;
-  for (const instr of instructions) codeSizeBytes += estimateInstrSize(instr);
-  const dataSizeBytes = cursorRef.addr;
+  // Real machine-code bytes for the Memory tab's Code view — best-effort: a bug here
+  // should never break assembly/execution, so fall back to an empty code image on error.
+  let code = null;
+  try { code = encodeProgram(instructions, labels); } catch (e) { code = null; }
 
-  return { instructions, dataMap, equMap, labels, memInit, stackSize, codeSizeBytes, dataSizeBytes };
+  return { instructions, dataMap, equMap, labels, memInit, stackSize, segs, code };
 }
 
 /* ==================================================================
@@ -812,6 +1118,16 @@ function setValue(descr, cpu, val) {
 function opSize(instr) {
   for (const a of instr.args) if (a.type === 'reg' || a.type === 'mem') return a.size;
   return 2;
+}
+
+/* Records what the ALU just did for the ALU panel: operand(s), size, and result — captured
+   at the moment of execution so it's correct even when source and destination overlap
+   (e.g. ADD AX, AX). extra can carry op-specific fields like {remainder} for DIV/IDIV. */
+function setAlu(cpu, instr, size, a, b, result, extra) {
+  cpu.lastAlu = Object.assign({
+    op: instr.op, size, a, b, result,
+    text: instr.op + (instr.argsRaw ? ' ' + instr.argsRaw : '')
+  }, extra || {});
 }
 
 function pushWord(cpu, val) {
@@ -861,34 +1177,34 @@ function execStep(cpu, prog, io) {
       case 'MOV': setValue(args[0], cpu, getValue(args[1], cpu)); break;
       case 'LEA': setValue(args[0], cpu, args[1].calcAddress(cpu)); break;
       case 'XCHG': { const a = getValue(args[0], cpu), b = getValue(args[1], cpu); setValue(args[0], cpu, b); setValue(args[1], cpu, a); break; }
-      case 'ADD': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); setValue(args[0], cpu, updateFlagsAdd(cpu, a, b, a + b, sz)); break; }
-      case 'ADC': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); setValue(args[0], cpu, updateFlagsAdd(cpu, a, b, a + b + cpu.flags.CF, sz)); break; }
-      case 'SUB': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); setValue(args[0], cpu, updateFlagsSub(cpu, a, b, a - b, sz)); break; }
-      case 'SBB': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); setValue(args[0], cpu, updateFlagsSub(cpu, a, b, a - b - cpu.flags.CF, sz)); break; }
-      case 'CMP': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); updateFlagsSub(cpu, a, b, a - b, sz); break; }
-      case 'INC': { const sz = opSize(instr); const a = getValue(args[0], cpu); setValue(args[0], cpu, updateFlagsAdd(cpu, a, 1, a + 1, sz, false)); break; }
-      case 'DEC': { const sz = opSize(instr); const a = getValue(args[0], cpu); setValue(args[0], cpu, updateFlagsSub(cpu, a, 1, a - 1, sz, false)); break; }
-      case 'NEG': { const sz = opSize(instr); const a = getValue(args[0], cpu); setValue(args[0], cpu, updateFlagsSub(cpu, 0, a, 0 - a, sz)); break; }
-      case 'AND': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); setValue(args[0], cpu, updateFlagsLogic(cpu, a & b, sz)); break; }
-      case 'OR': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); setValue(args[0], cpu, updateFlagsLogic(cpu, a | b, sz)); break; }
-      case 'XOR': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); setValue(args[0], cpu, updateFlagsLogic(cpu, a ^ b, sz)); break; }
-      case 'NOT': { const sz = opSize(instr); const a = getValue(args[0], cpu); setValue(args[0], cpu, (~a) & mask(sz)); break; }
-      case 'TEST': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); updateFlagsLogic(cpu, a & b, sz); break; }
-      case 'SHL': case 'SAL': { const sz = opSize(instr); const cnt = args[1] ? (getValue(args[1], cpu) & 0x1F) : 1; let a = getValue(args[0], cpu); let res = a; for (let i = 0; i < cnt; i++) { cpu.flags.CF = (res & signBit(sz)) ? 1 : 0; res = (res << 1) & mask(sz); } setValue(args[0], cpu, updateFlagsLogic(cpu, res, sz)); break; }
-      case 'SHR': { const sz = opSize(instr); const cnt = args[1] ? (getValue(args[1], cpu) & 0x1F) : 1; let a = getValue(args[0], cpu); let res = a; for (let i = 0; i < cnt; i++) { cpu.flags.CF = res & 1; res = res >>> 1; } setValue(args[0], cpu, updateFlagsLogic(cpu, res, sz)); break; }
-      case 'SAR': { const sz = opSize(instr); const cnt = args[1] ? (getValue(args[1], cpu) & 0x1F) : 1; let a = getValue(args[0], cpu); const sb = signBit(sz); let res = a; for (let i = 0; i < cnt; i++) { cpu.flags.CF = res & 1; const neg = res & sb; res = res >>> 1; if (neg) res |= sb; } setValue(args[0], cpu, updateFlagsLogic(cpu, res, sz)); break; }
-      case 'ROL': { const sz = opSize(instr); const bits = sz * 8; const cnt = (args[1] ? getValue(args[1], cpu) : 1) % bits; let a = getValue(args[0], cpu); const res = ((a << cnt) | (a >>> (bits - cnt))) & mask(sz); setValue(args[0], cpu, res); cpu.flags.CF = res & 1; break; }
-      case 'ROR': { const sz = opSize(instr); const bits = sz * 8; const cnt = (args[1] ? getValue(args[1], cpu) : 1) % bits; let a = getValue(args[0], cpu); const res = ((a >>> cnt) | (a << (bits - cnt))) & mask(sz); setValue(args[0], cpu, res); cpu.flags.CF = (res & signBit(sz)) ? 1 : 0; break; }
-      case 'MUL': { const sz = opSize(instr); const v = getValue(args[0], cpu); if (sz === 1) { const r = (cpu.reg.AX & 0xFF) * v; cpu.reg.AX = r & 0xFFFF; cpu.flags.CF = cpu.flags.OF = (r > 0xFF) ? 1 : 0; } else { const r = (cpu.reg.AX) * v; cpu.reg.AX = r & 0xFFFF; cpu.reg.DX = (r >>> 16) & 0xFFFF; cpu.flags.CF = cpu.flags.OF = (cpu.reg.DX !== 0) ? 1 : 0; } break; }
-      case 'IMUL': { const sz = opSize(instr); const v = toSigned(getValue(args[0], cpu), sz); if (sz === 1) { const r = toSigned(cpu.reg.AX & 0xFF, 1) * v; cpu.reg.AX = r & 0xFFFF; cpu.flags.CF = cpu.flags.OF = (r > 127 || r < -128) ? 1 : 0; } else { const r = toSigned(cpu.reg.AX, 2) * v; cpu.reg.AX = r & 0xFFFF; cpu.reg.DX = (r >> 16) & 0xFFFF; cpu.flags.CF = cpu.flags.OF = (r > 32767 || r < -32768) ? 1 : 0; } break; }
-      case 'DIV': { const sz = opSize(instr); const v = getValue(args[0], cpu); if (v === 0) { cpu.halted = true; cpu.errorMsg = 'Divide by zero (line ' + (instr.lineNo + 1) + ')'; break; } if (sz === 1) { const dividend = cpu.reg.AX; const q = Math.floor(dividend / v), r = dividend % v; if (q > 0xFF) { cpu.halted = true; cpu.errorMsg = 'Divide overflow'; break; } cpu.reg.AX = (r << 8) | (q & 0xFF); } else { const dividend = (cpu.reg.DX << 16 >>> 0) | cpu.reg.AX; const q = Math.floor(dividend / v), r = dividend % v; if (q > 0xFFFF) { cpu.halted = true; cpu.errorMsg = 'Divide overflow'; break; } cpu.reg.AX = q & 0xFFFF; cpu.reg.DX = r & 0xFFFF; } break; }
-      case 'IDIV': { const sz = opSize(instr); const v = toSigned(getValue(args[0], cpu), sz); if (v === 0) { cpu.halted = true; cpu.errorMsg = 'Divide by zero (line ' + (instr.lineNo + 1) + ')'; break; } if (sz === 1) { const dividend = toSigned(cpu.reg.AX, 2); const q = Math.trunc(dividend / v), r = dividend % v; cpu.reg.AX = ((r & 0xFF) << 8) | (q & 0xFF); } else { const dividend = (cpu.reg.DX << 16) | cpu.reg.AX; const q = Math.trunc(dividend / v), r = dividend % v; cpu.reg.AX = q & 0xFFFF; cpu.reg.DX = r & 0xFFFF; } break; }
+      case 'ADD': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsAdd(cpu, a, b, a + b, sz); setAlu(cpu, instr, sz, a, b, res); setValue(args[0], cpu, res); break; }
+      case 'ADC': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsAdd(cpu, a, b, a + b + cpu.flags.CF, sz); setAlu(cpu, instr, sz, a, b, res); setValue(args[0], cpu, res); break; }
+      case 'SUB': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsSub(cpu, a, b, a - b, sz); setAlu(cpu, instr, sz, a, b, res); setValue(args[0], cpu, res); break; }
+      case 'SBB': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsSub(cpu, a, b, a - b - cpu.flags.CF, sz); setAlu(cpu, instr, sz, a, b, res); setValue(args[0], cpu, res); break; }
+      case 'CMP': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsSub(cpu, a, b, a - b, sz); setAlu(cpu, instr, sz, a, b, res); break; }
+      case 'INC': { const sz = opSize(instr); const a = getValue(args[0], cpu); const res = updateFlagsAdd(cpu, a, 1, a + 1, sz, false); setAlu(cpu, instr, sz, a, 1, res); setValue(args[0], cpu, res); break; }
+      case 'DEC': { const sz = opSize(instr); const a = getValue(args[0], cpu); const res = updateFlagsSub(cpu, a, 1, a - 1, sz, false); setAlu(cpu, instr, sz, a, 1, res); setValue(args[0], cpu, res); break; }
+      case 'NEG': { const sz = opSize(instr); const a = getValue(args[0], cpu); const res = updateFlagsSub(cpu, 0, a, 0 - a, sz); setAlu(cpu, instr, sz, a, null, res); setValue(args[0], cpu, res); break; }
+      case 'AND': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsLogic(cpu, a & b, sz); setAlu(cpu, instr, sz, a, b, res); setValue(args[0], cpu, res); break; }
+      case 'OR': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsLogic(cpu, a | b, sz); setAlu(cpu, instr, sz, a, b, res); setValue(args[0], cpu, res); break; }
+      case 'XOR': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsLogic(cpu, a ^ b, sz); setAlu(cpu, instr, sz, a, b, res); setValue(args[0], cpu, res); break; }
+      case 'NOT': { const sz = opSize(instr); const a = getValue(args[0], cpu); const res = (~a) & mask(sz); setAlu(cpu, instr, sz, a, null, res); setValue(args[0], cpu, res); break; }
+      case 'TEST': { const sz = opSize(instr); const a = getValue(args[0], cpu), b = getValue(args[1], cpu); const res = updateFlagsLogic(cpu, a & b, sz); setAlu(cpu, instr, sz, a, b, res); break; }
+      case 'SHL': case 'SAL': { const sz = opSize(instr); const cnt = args[1] ? (getValue(args[1], cpu) & 0x1F) : 1; let a = getValue(args[0], cpu); let res = a; for (let i = 0; i < cnt; i++) { cpu.flags.CF = (res & signBit(sz)) ? 1 : 0; res = (res << 1) & mask(sz); } res = updateFlagsLogic(cpu, res, sz); setAlu(cpu, instr, sz, a, cnt, res); setValue(args[0], cpu, res); break; }
+      case 'SHR': { const sz = opSize(instr); const cnt = args[1] ? (getValue(args[1], cpu) & 0x1F) : 1; let a = getValue(args[0], cpu); let res = a; for (let i = 0; i < cnt; i++) { cpu.flags.CF = res & 1; res = res >>> 1; } res = updateFlagsLogic(cpu, res, sz); setAlu(cpu, instr, sz, a, cnt, res); setValue(args[0], cpu, res); break; }
+      case 'SAR': { const sz = opSize(instr); const cnt = args[1] ? (getValue(args[1], cpu) & 0x1F) : 1; let a = getValue(args[0], cpu); const sb = signBit(sz); let res = a; for (let i = 0; i < cnt; i++) { cpu.flags.CF = res & 1; const neg = res & sb; res = res >>> 1; if (neg) res |= sb; } res = updateFlagsLogic(cpu, res, sz); setAlu(cpu, instr, sz, a, cnt, res); setValue(args[0], cpu, res); break; }
+      case 'ROL': { const sz = opSize(instr); const bits = sz * 8; const cnt = (args[1] ? getValue(args[1], cpu) : 1) % bits; let a = getValue(args[0], cpu); const res = ((a << cnt) | (a >>> (bits - cnt))) & mask(sz); setAlu(cpu, instr, sz, a, cnt, res); setValue(args[0], cpu, res); cpu.flags.CF = res & 1; break; }
+      case 'ROR': { const sz = opSize(instr); const bits = sz * 8; const cnt = (args[1] ? getValue(args[1], cpu) : 1) % bits; let a = getValue(args[0], cpu); const res = ((a >>> cnt) | (a << (bits - cnt))) & mask(sz); setAlu(cpu, instr, sz, a, cnt, res); setValue(args[0], cpu, res); cpu.flags.CF = (res & signBit(sz)) ? 1 : 0; break; }
+      case 'MUL': { const sz = opSize(instr); const v = getValue(args[0], cpu); if (sz === 1) { const a0 = cpu.reg.AX & 0xFF; const r = a0 * v; cpu.reg.AX = r & 0xFFFF; cpu.flags.CF = cpu.flags.OF = (r > 0xFF) ? 1 : 0; setAlu(cpu, instr, sz, a0, v, r); } else { const a0 = cpu.reg.AX; const r = a0 * v; cpu.reg.AX = r & 0xFFFF; cpu.reg.DX = (r >>> 16) & 0xFFFF; cpu.flags.CF = cpu.flags.OF = (cpu.reg.DX !== 0) ? 1 : 0; setAlu(cpu, instr, sz, a0, v, r); } break; }
+      case 'IMUL': { const sz = opSize(instr); const v = toSigned(getValue(args[0], cpu), sz); if (sz === 1) { const a0 = toSigned(cpu.reg.AX & 0xFF, 1); const r = a0 * v; cpu.reg.AX = r & 0xFFFF; cpu.flags.CF = cpu.flags.OF = (r > 127 || r < -128) ? 1 : 0; setAlu(cpu, instr, sz, a0, v, r); } else { const a0 = toSigned(cpu.reg.AX, 2); const r = a0 * v; cpu.reg.AX = r & 0xFFFF; cpu.reg.DX = (r >> 16) & 0xFFFF; cpu.flags.CF = cpu.flags.OF = (r > 32767 || r < -32768) ? 1 : 0; setAlu(cpu, instr, sz, a0, v, r); } break; }
+      case 'DIV': { const sz = opSize(instr); const v = getValue(args[0], cpu); if (v === 0) { cpu.halted = true; cpu.errorMsg = 'Divide by zero (line ' + (instr.lineNo + 1) + ')'; break; } if (sz === 1) { const dividend = cpu.reg.AX; const q = Math.floor(dividend / v), r = dividend % v; if (q > 0xFF) { cpu.halted = true; cpu.errorMsg = 'Divide overflow'; break; } cpu.reg.AX = (r << 8) | (q & 0xFF); setAlu(cpu, instr, sz, dividend, v, q, { remainder: r }); } else { const dividend = (cpu.reg.DX << 16 >>> 0) | cpu.reg.AX; const q = Math.floor(dividend / v), r = dividend % v; if (q > 0xFFFF) { cpu.halted = true; cpu.errorMsg = 'Divide overflow'; break; } cpu.reg.AX = q & 0xFFFF; cpu.reg.DX = r & 0xFFFF; setAlu(cpu, instr, sz, dividend, v, q, { remainder: r }); } break; }
+      case 'IDIV': { const sz = opSize(instr); const v = toSigned(getValue(args[0], cpu), sz); if (v === 0) { cpu.halted = true; cpu.errorMsg = 'Divide by zero (line ' + (instr.lineNo + 1) + ')'; break; } if (sz === 1) { const dividend = toSigned(cpu.reg.AX, 2); const q = Math.trunc(dividend / v), r = dividend % v; cpu.reg.AX = ((r & 0xFF) << 8) | (q & 0xFF); setAlu(cpu, instr, sz, dividend, v, q, { remainder: r }); } else { const dividend = (cpu.reg.DX << 16) | cpu.reg.AX; const q = Math.trunc(dividend / v), r = dividend % v; cpu.reg.AX = q & 0xFFFF; cpu.reg.DX = r & 0xFFFF; setAlu(cpu, instr, sz, dividend, v, q, { remainder: r }); } break; }
       case 'PUSH': pushWord(cpu, getValue(args[0], cpu)); break;
       case 'POP': setValue(args[0], cpu, popWord(cpu)); break;
       case 'PUSHF': pushWord(cpu, flagsToWord(cpu.flags)); break;
       case 'POPF': wordToFlags(cpu.flags, popWord(cpu)); break;
       case 'CALL': pushWord(cpu, nextIndex); nextIndex = prog.labels[args[0].name]; break;
-      case 'RET': { nextIndex = popWord(cpu); if (args[0]) cpu.reg.SP = (cpu.reg.SP + getValue(args[0], cpu)) & 0xFFFF; break; }
+      case 'RET': case 'RETN': case 'RETF': { nextIndex = popWord(cpu); if (args[0]) cpu.reg.SP = (cpu.reg.SP + getValue(args[0], cpu)) & 0xFFFF; break; }
       case 'JMP': nextIndex = prog.labels[args[0].name]; break;
       case 'LOOP': cpu.reg.CX = (cpu.reg.CX - 1) & 0xFFFF; if (cpu.reg.CX !== 0) nextIndex = prog.labels[args[0].name]; break;
       case 'LOOPE': case 'LOOPZ': cpu.reg.CX = (cpu.reg.CX - 1) & 0xFFFF; if (cpu.reg.CX !== 0 && cpu.flags.ZF === 1) nextIndex = prog.labels[args[0].name]; break;
@@ -966,7 +1282,6 @@ function doInterrupt(cpu, num, io) {
     if (ah === 0x0E) io.output(String.fromCharCode(cpu.reg.AX & 0xFF));
   }
 }
-
 /* ============================================================
    UI layer — wires the engine (assemble/CPU/execStep) to the DOM
    ============================================================ */
@@ -1080,13 +1395,33 @@ function doInterrupt(cpu, num, io) {
   let runToken = 0;
 
   function freshCpu() {
+    const segs = assembled.segs || { cs: DEFAULT_CS, ss: DEFAULT_SS, ds: DEFAULT_DS, es: DEFAULT_ES };
     const c = new CPU(assembled.stackSize);
-    // Genuinely calculate CS/DS/ES/SS from this program's own estimated code size and
-    // actual data size, the way a real DOS loader lays PSP -> CODE -> DATA -> STACK out
-    // in memory, instead of using fixed segment numbers for every program.
-    const segs = computeSegments(assembled.codeSizeBytes, assembled.dataSizeBytes);
-    c.reg.CS = segs.cs; c.reg.DS = segs.ds; c.reg.ES = segs.es; c.reg.SS = segs.ss;
-    for (const m of assembled.memInit) c.mem[physFromSeg(c, 'DS', m.addr)] = m.val;
+    c.reg.CS = segs.cs; c.reg.SS = segs.ss; c.reg.ES = segs.es;
+    // DATA lives at the real, computed DS (segs.ds) in physical memory regardless of what
+    // DS itself currently holds — a real DOS loader places DATA there before the program's
+    // startup code has even run, it just hasn't pointed DS at it yet (see below).
+    const dsBase = (segs.ds & 0xFFFF) << 4;
+    for (const m of assembled.memInit) c.mem[(dsBase + (m.addr & 0xFFFF)) & MEM_MASK] = m.val;
+    // Real machine-code bytes for the Memory tab's Code view (see engine.js's encodeProgram).
+    // Real emu8086 fills the rest of the code segment beyond the actual program with NOP
+    // (90h) bytes rather than leaving it zeroed, which is what makes its memory dump show
+    // a long run of "NOP" entries after your last instruction — match that here too, for
+    // the whole 64KB CS segment (nothing else is ever placed there, since CS sits after
+    // DATA/stack in this simulator's segment layout, so this can't clobber other segments).
+    {
+      const csBase = (segs.cs & 0xFFFF) << 4;
+      const cb = (assembled.code && assembled.code.bytes) || new Uint8Array(0);
+      for (let i = 0; i < 0x10000; i++) {
+        c.mem[(csBase + i) & MEM_MASK] = i < cb.length ? cb[i] : 0x90;
+      }
+    }
+    // A real DOS loader points DS (and ES) at the PSP, not at DATA — it's the assembled
+    // program's own auto-inserted startup code (see assemble()'s "MOV DX, <ds>h" / "MOV
+    // DS, DX" at instructions 0 and 1) that actually loads DS with the real DATA segment.
+    // So a fresh CPU starts with DS equal to ES (both pointing at the PSP, per true 8086/DOS
+    // convention), and DS visibly changes the first time you step — matching real emu8086.
+    c.reg.DS = segs.es;
     c.inputPos = 0;
     return c;
   }
@@ -1125,15 +1460,22 @@ function doInterrupt(cpu, num, io) {
     if (!tryAssemble()) return false;
     cpu = freshCpu();
     history = [];
-    const dataKeys = Object.keys(assembled.dataMap);
-    const firstOffset = dataKeys.length ? assembled.dataMap[dataKeys[0]].address : 0;
-    memViewAddr = physFromSeg(cpu, 'DS', firstOffset);
+    // Land on DS:0000 — the very start of the program's own allocated memory (data
+    // then stack sit back-to-back right after it) — so the Memory tab always opens
+    // already positioned at the program's data+stack region. Uses the computed real
+    // DS (assembled.segs.ds) directly rather than cpu.reg.DS, since DS itself briefly
+    // equals ES until the program's auto-inserted startup code (instructions 0-1)
+    // actually loads it — see freshCpu().
+    memRefSeg = 'DS';
+    memViewAddr = ((assembled.segs ? assembled.segs.ds : DEFAULT_DS) << 4) & MEM_MASK;
+    selectedMemAddr = memViewAddr;
     lastMemWindow = null;
     buildDisasm();
     buildSourceView();
     renderAll();
     if (switchTab) {
       document.querySelector('.tabbtn[data-view="emuView"]').click();
+      document.querySelector('.subtabbtn[data-sub="subMemory"]').click();
     }
     return true;
   }
@@ -1215,15 +1557,57 @@ function doInterrupt(cpu, num, io) {
   const regGridSeg = $('regGridSeg');
   (function buildSegGrid() {
     let html = '';
-    for (const r of SEG_LIST) html += `<div class="lbl">${r}</div><input data-reg="${r}" maxlength="4">`;
+    for (const r of SEG_LIST) {
+      // IP is a derived display value (see currentIP()), not editable engine state.
+      const ro = r === 'IP' ? ' readonly' : '';
+      html += `<div class="lbl">${r}</div><input data-reg="${r}" maxlength="4"${ro}>`;
+    }
     regGridSeg.innerHTML = html;
   })();
   const flagsGrid = $('flagsGrid');
   (function buildFlags() {
     let html = '';
-    for (const f of FLAG_LIST) html += `<div class="flagChip" data-flag="${f}">${f}</div>`;
+    for (const f of FLAG_LIST) html += `<div class="flagChip" data-flag="${f}"><span class="fname">${f}</span><span class="fval">0</span></div>`;
     flagsGrid.innerHTML = html;
   })();
+  const aluFlagsGrid = $('aluFlagsGrid');
+  (function buildAluFlags() {
+    let html = '';
+    for (const f of FLAG_LIST) html += `<div class="flagChip" data-flag="${f}"><span class="fname">${f}</span><span class="fval">0</span></div>`;
+    aluFlagsGrid.innerHTML = html;
+  })();
+
+  /* ---------------- FPU register panel (display only) ----------------
+     A plain 8086 has no built-in FPU (that's the separate 8087 coprocessor), and this
+     simulator doesn't execute x87 instructions, so there's nothing here that actually
+     changes. What's shown is the standard post-FINIT/reset x87 register state, purely
+     for reference — matching the CPU/FPU toggle in the classic emu8086 registers panel. */
+  (function buildFpuRegs() {
+    let html = '';
+    for (let i = 0; i < 8; i++) {
+      html += `<div class="lbl">ST${i}</div><input data-fpu="ST${i}" readonly value="+0.0000000000e+0" style="grid-column: span 2;font-size:10px;">`;
+    }
+    $('fpuStRegs').innerHTML = html;
+
+    const ctrlRows = [
+      ['Control', '037F'], ['Status', '0000'], ['Tag', 'FFFF'],
+      ['IP (seg)', '0000'], ['IP (off)', '0000'], ['Opcode', '000'],
+    ];
+    let ctrlHtml = '';
+    for (const [label, val] of ctrlRows) ctrlHtml += `<div class="lbl">${label}</div><input readonly value="${val}">`;
+    $('fpuCtrlRegs').innerHTML = ctrlHtml;
+  })();
+  const REG_MODE_BTNS = ['btnRegCPU', 'btnRegALU', 'btnRegFPU'];
+  const REG_MODE_VIEWS = { btnRegCPU: 'cpuRegView', btnRegALU: 'aluRegView', btnRegFPU: 'fpuRegView' };
+  for (const btnId of REG_MODE_BTNS) {
+    $(btnId).addEventListener('click', () => {
+      for (const other of REG_MODE_BTNS) {
+        $(other).classList.toggle('active', other === btnId);
+        $(REG_MODE_VIEWS[other]).style.display = (other === btnId) ? '' : 'none';
+      }
+      if (btnId === 'btnRegALU') renderAlu();
+    });
+  }
 
   function hex(v, digits) { return v.toString(16).toUpperCase().padStart(digits, '0'); }
 
@@ -1257,11 +1641,66 @@ function doInterrupt(cpu, num, io) {
       regGrid16.querySelector(`[data-reg="${r}"]`).value = hex(cpu.reg[r], 4);
     }
     for (const r of SEG_LIST) {
-      regGridSeg.querySelector(`[data-reg="${r}"]`).value = hex(cpu.reg[r], 4);
+      // IP isn't engine-managed state (this simulator executes by instruction index, not
+      // real CS:IP fetch/decode) — it's derived fresh each render from the byte-address
+      // table the real-opcode encoder built, so it tracks the actual current instruction's
+      // offset within CS, exactly like real emu8086's IP.
+      const val = (r === 'IP') ? currentIP() : cpu.reg[r];
+      regGridSeg.querySelector(`[data-reg="${r}"]`).value = hex(val, 4);
     }
     flagsGrid.querySelectorAll('.flagChip').forEach(chip => {
       const f = chip.dataset.flag;
-      chip.classList.toggle('on', !!cpu.flags[f]);
+      const on = !!cpu.flags[f];
+      chip.classList.toggle('on', on);
+      const v = chip.querySelector('.fval');
+      if (v) v.textContent = on ? '1' : '0';
+    });
+  }
+
+  function currentIP() {
+    if (!cpu) return 0;
+    const table = assembled && assembled.code && assembled.code.instrAddr;
+    return (table && table[cpu.ipIndex] !== undefined) ? table[cpu.ipIndex] & 0xFFFF : 0;
+  }
+
+  /* ---------- ALU panel: operands/result of the most recent arithmetic/logic/shift/
+     rotate/mul/div instruction, plus which flags that instruction category writes. ---------- */
+  function toBinaryGrouped(u, bits) {
+    const m = bits >= 32 ? (u >>> 0) : (u & ((1 << bits) - 1));
+    return m.toString(2).padStart(bits, '0').match(/.{1,4}/g).join(' ');
+  }
+  function fmtAluVal(v) {
+    if (v === null || v === undefined) return '—';
+    // hex/binary show the value's actual bit pattern (two's complement for a negative
+    // IDIV result, say); the decimal in parens keeps the signed value as computed.
+    const bits = (v > 0xFFFF || v < -0x8000) ? 32 : 16;
+    const u = bits === 32 ? (v >>> 0) : (v & 0xFFFF);
+    return hex(u, bits / 4) + 'h (' + v + ') ' + toBinaryGrouped(u, bits) + 'b';
+  }
+  function renderAlu() {
+    const box = $('aluInfo');
+    const la = cpu ? cpu.lastAlu : null;
+    let html = '';
+    if (!la) {
+      html = '<div class="lbl">Instruction</div><input class="aluText" readonly value="(no ALU op executed yet)">';
+    } else {
+      html += `<div class="lbl">Instruction</div><input class="aluText" readonly value="${escapeHtml(la.text)}">`;
+      html += `<div class="lbl">A</div><input readonly value="${fmtAluVal(la.a)}">`;
+      html += `<div class="lbl">B</div><input readonly value="${fmtAluVal(la.b)}">`;
+      html += `<div class="lbl">Result</div><input readonly value="${fmtAluVal(la.result)}">`;
+      if (la.remainder !== undefined) {
+        html += `<div class="lbl">Remainder</div><input readonly value="${fmtAluVal(la.remainder)}">`;
+      }
+    }
+    box.innerHTML = html;
+    const affected = (la && ALU_FLAGS_AFFECTED[la.op]) || [];
+    aluFlagsGrid.querySelectorAll('.flagChip').forEach(chip => {
+      const f = chip.dataset.flag;
+      const on = !!(cpu && cpu.flags[f]);
+      chip.classList.toggle('on', on);
+      chip.classList.toggle('aluHit', affected.includes(f));
+      const v = chip.querySelector('.fval');
+      if (v) v.textContent = on ? '1' : '0';
     });
   }
 
@@ -1364,6 +1803,10 @@ function doInterrupt(cpu, num, io) {
   const MEM_MASK = MEM_SIZE - 1; // 0xFFFFF — full 00000h..FFFFFh physical range
   let memViewAddr = 0;
   let lastMemWindow = null; // { start, bytes } for change-highlighting between renders
+  let selectedMemAddr = 0;  // start of the highlighted range, shown as segment:offset above the table
+  let selectedMemLen = 1;   // how many consecutive bytes are highlighted together (a whole instruction
+                             // while following CS:IP; just 1 for an ordinary manual row click)
+  let memRefSeg = 'DS';     // which segment register the segment:offset readout is relative to
 
   // Control-code names (0-31, 127) in the style of the classic emu8086 memory view;
   // 128-255 render as the IBM PC "code page 437" extended character set.
@@ -1389,6 +1832,27 @@ function doInterrupt(cpu, num, io) {
 
   function clampMemStart(a) { return a & MEM_MASK; }
 
+  // When the Memory tab is showing the Code segment (memRefSeg === 'CS'), keep it tracking
+  // CS:IP as the program runs — stepping or running now moves the highlighted range (and
+  // scrolls the page into view when IP walks off the current one), like emu8086's own
+  // memory window following execution, instead of staying frozen wherever Code was clicked.
+  // The highlight covers every byte of the current instruction together (e.g. all 3 bytes
+  // of "MOV DX,0720h"), not just its first byte, using the real opcode encoder's per-
+  // instruction length table.
+  function followMemoryToIP() {
+    if (!cpu || memRefSeg !== 'CS') return;
+    const addr = physFromSeg(cpu, 'CS', currentIP());
+    const lenTable = assembled && assembled.code && assembled.code.instrLen;
+    const len = (lenTable && lenTable[cpu.ipIndex] !== undefined) ? lenTable[cpu.ipIndex] : 1;
+    selectedMemAddr = addr & MEM_MASK;
+    selectedMemLen = Math.max(1, len);
+    const start = clampMemStart(memViewAddr);
+    if (selectedMemAddr < start || (selectedMemAddr + selectedMemLen - 1) >= start + MEM_WINDOW) {
+      memViewAddr = selectedMemAddr - (selectedMemAddr % MEM_WINDOW);
+      lastMemWindow = null;
+    }
+  }
+
   function renderMemory() {
     const tbody = $('memTable').querySelector('tbody');
     if (!cpu) { tbody.innerHTML = ''; return; }
@@ -1402,31 +1866,72 @@ function doInterrupt(cpu, num, io) {
       const addr = (start + i) & MEM_MASK;
       const val = bytes[i];
       const changed = prev && prev[i] !== val;
-      html += `<tr class="${changed ? 'changed' : ''}"><td>${hex(addr, 5)}:</td><td>${hex(val, 2)}</td><td>${dec3(val)}</td><td>${escapeHtml(byteAscii(val))}</td></tr>`;
+      const inSelection = addr >= selectedMemAddr && addr < selectedMemAddr + selectedMemLen;
+      const cls = [changed ? 'changed' : '', inSelection ? 'selected' : ''].filter(Boolean).join(' ');
+      html += `<tr data-addr="${addr}" class="${cls}"><td>${hex(addr, 5)}:</td><td>${hex(val, 2)}</td><td>${dec3(val)}</td><td>${escapeHtml(byteAscii(val))}</td></tr>`;
     }
     tbody.innerHTML = html;
     $('memAddrInput').value = hex(start, 5);
     lastMemWindow = { start, bytes };
+    renderMemSelBox();
+  }
+
+  // Shows "segment:offset" for the selected cell (like emu8086's memory window), computed
+  // relative to whichever segment register (DS/SS) the view was last navigated with — the
+  // physical address always has a valid 16-bit offset relative to that segment, since an
+  // 8086 offset simply wraps mod 0x10000.
+  function renderMemSelBox() {
+    if (!cpu) { $('memSelBox').textContent = '0000:0000'; return; }
+    const base = segBase(cpu, memRefSeg);
+    const offset = (selectedMemAddr - base) & 0xFFFF;
+    $('memSelBox').textContent = hex(cpu.reg[memRefSeg], 4) + ':' + hex(offset, 4);
   }
 
   function isMemTabActive() { return $('subMemory').classList.contains('active'); }
-  function gotoMemAddr(addr) {
+  function gotoMemAddr(addr, selectAddr) {
     memViewAddr = addr & MEM_MASK;
+    selectedMemAddr = (selectAddr !== undefined ? selectAddr : addr) & MEM_MASK;
+    selectedMemLen = 1; // a fresh manual jump always starts as a single-byte highlight;
+                        // followMemoryToIP() will widen it back out to a full instruction
+                        // on the next render if the Code view is still tracking CS:IP.
     lastMemWindow = null; // new location: don't diff against unrelated bytes
     renderMemory();
   }
+  // clicking a row selects it (highlight + segment:offset readout) without moving the window
+  $('memTable').querySelector('tbody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-addr]');
+    if (!tr || !cpu) return;
+    selectedMemAddr = parseInt(tr.dataset.addr, 10);
+    selectedMemLen = 1;
+    renderMemory();
+  });
   $('memGoBtn').addEventListener('click', () => {
     const v = parseInt($('memAddrInput').value.replace(/[^0-9A-Fa-f]/g, ''), 16);
     gotoMemAddr(isNaN(v) ? 0 : v);
   });
   $('memAddrInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('memGoBtn').click(); });
+  $('memCodeBtn').addEventListener('click', () => {
+    if (!cpu) return;
+    memRefSeg = 'CS';
+    // Jump to the current instruction (CS:IP), not always CS:0000 — so clicking Code
+    // mid-run lands right where execution actually is, and this tab then keeps following
+    // it (see followMemoryToIP()) as you step or run.
+    gotoMemAddr(physFromSeg(cpu, 'CS', currentIP()));
+    followMemoryToIP(); // widen the highlight to the whole current instruction right away
+    renderMemory();
+  });
   $('memDataBtn').addEventListener('click', () => {
     if (!cpu) return;
+    memRefSeg = 'DS';
     const keys = assembled ? Object.keys(assembled.dataMap) : [];
     const offset = keys.length ? assembled.dataMap[keys[0]].address : 0;
     gotoMemAddr(physFromSeg(cpu, 'DS', offset));
   });
-  $('memStackBtn').addEventListener('click', () => { if (cpu) gotoMemAddr(physFromSeg(cpu, 'SS', cpu.reg.SP)); });
+  $('memStackBtn').addEventListener('click', () => {
+    if (!cpu) return;
+    memRefSeg = 'SS';
+    gotoMemAddr(physFromSeg(cpu, 'SS', cpu.reg.SP));
+  });
   $('memPrevBtn').addEventListener('click', () => gotoMemAddr(clampMemStart(memViewAddr) - MEM_WINDOW));
   $('memNextBtn').addEventListener('click', () => gotoMemAddr(clampMemStart(memViewAddr) + MEM_WINDOW));
   // rebuild the memory list whenever its tab becomes visible (it's skipped in the
@@ -1436,6 +1941,7 @@ function doInterrupt(cpu, num, io) {
   $('varsTable').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-jump]');
     if (!btn) return;
+    memRefSeg = 'DS'; // Vars addresses are always DS-relative
     gotoMemAddr(parseInt(btn.dataset.jump, 10));
     document.querySelector('.subtabbtn[data-sub="subMemory"]').click();
   });
@@ -1455,10 +1961,12 @@ function doInterrupt(cpu, num, io) {
 
   function renderAll() {
     renderRegisters();
+    renderAlu();
     renderDisasmHighlight();
     renderSourceHighlight();
     renderVars();
     renderStack();
+    followMemoryToIP();
     if (isMemTabActive()) renderMemory();
     renderScreen();
     renderStatus();
