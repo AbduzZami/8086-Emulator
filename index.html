@@ -119,7 +119,7 @@
   .miniBtn{padding:2px 7px;font-size:10px;}
 
   #screenOut{white-space:pre-wrap;background:#000;color:#7CFC7C;padding:10px;min-height:120px;border-radius:4px;font-size:13px;border:1px solid var(--border);}
-  .stdinBox{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:4px;margin-top:8px;}
+  .stdinBox{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px;border-radius:4px;margin-top:8px;font:inherit;resize:vertical;min-height:2.4em;}
 
   table.dump{width:100%;border-collapse:collapse;font-size:11.5px;}
   table.dump td,table.dump th{padding:3px 6px;border-bottom:1px solid var(--border);text-align:left;}
@@ -245,7 +245,7 @@
         <div class="subview active" id="subScreen">
           <div id="screenOut"></div>
           <label style="color:var(--dim);font-size:11px;">Keyboard input buffer (consumed by INT 21h AH=01h/08h)</label>
-          <input type="text" id="stdinBuf" class="stdinBox" placeholder="type characters the program should read">
+          <textarea id="stdinBuf" class="stdinBox" rows="2" placeholder="type characters the program should read — press Enter to send a real CR (13), the way INT 21h/AH=1 expects for 'press Enter to stop'"></textarea>
         </div>
         <div class="subview" id="subSource"><pre id="sourceView" style="white-space:pre-wrap;font-size:12px;margin:0;"></pre></div>
         <div class="subview" id="subVars"><table class="dump" id="varsTable"><thead><tr><th>Name</th><th>Addr</th><th>Type</th><th>Value</th><th></th></tr></thead><tbody></tbody></table></div>
@@ -453,7 +453,9 @@ const ALU_FLAGS_AFFECTED = {
   TEST: ['CF','PF','ZF','SF','OF'], NOT: [],
   SHL: ['CF','PF','ZF','SF'], SAL: ['CF','PF','ZF','SF'], SHR: ['CF','PF','ZF','SF'], SAR: ['CF','PF','ZF','SF'],
   ROL: ['CF'], ROR: ['CF'],
-  MUL: ['CF','OF'], IMUL: ['CF','OF'], DIV: [], IDIV: []
+  MUL: ['CF','OF'], IMUL: ['CF','OF'], DIV: [], IDIV: [],
+  CMPSB: ['CF','PF','AF','ZF','SF','OF'], CMPSW: ['CF','PF','AF','ZF','SF','OF'],
+  SCASB: ['CF','PF','AF','ZF','SF','OF'], SCASW: ['CF','PF','AF','ZF','SF','OF']
 };
 
 /* physical-address helpers */
@@ -512,10 +514,17 @@ function stripComment(line) {
 }
 
 function splitArgs(s) {
-  // split on top-level commas (no bracket nesting needed for our subset, but be safe)
+  // split on top-level commas (respecting bracket/paren nesting and quoted strings/chars —
+  // a comma inside 'x' or "..." — e.g. the char literal in "mov dl, ','" — is not a separator)
   const parts = [];
-  let depth = 0, cur = '';
+  let depth = 0, cur = '', inStr = false, q = '';
   for (const c of s) {
+    if (inStr) {
+      cur += c;
+      if (c === q) inStr = false;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = true; q = c; cur += c; continue; }
     if (c === '[' || c === '(') depth++;
     if (c === ']' || c === ')') depth--;
     if (c === ',' && depth === 0) { parts.push(cur); cur = ''; }
@@ -527,39 +536,40 @@ function splitArgs(s) {
 
 const DATA_DIRECTIVES = ['DB', 'DW'];
 
+// Appends one DB/DW list item's bytes — a plain number/char, a "?", a quoted string, or a
+// "count DUP (...)" group. DUP's parenthesized part can itself be a comma-separated list
+// (e.g. "3 DUP(10, 20, 30)" repeats that whole 3-item sequence 3 times, not just "10") and
+// can nest (e.g. "2 DUP(3 DUP(0), 5)"), so this recurses on each inner item.
+function appendDataItem(item, size, bytes, equMap) {
+  item = item.trim();
+  let m;
+  if ((m = /^(.+?)\s*DUP\s*\((.*)\)$/i.exec(item))) {
+    const count = resolveConst(m[1], equMap);
+    const innerItems = splitArgs(m[2]);
+    for (let i = 0; i < count; i++) {
+      for (const inner of innerItems) appendDataItem(inner, size, bytes, equMap);
+    }
+  } else if (/^".*"$/.test(item) || /^'.*'$/.test(item)) {
+    const str = item.slice(1, -1);
+    for (const ch of str) {
+      bytes.push(ch.charCodeAt(0) & 0xFF);
+      if (size === 2) bytes.push(0);
+    }
+  } else if (item === '?') {
+    for (let k = 0; k < size; k++) bytes.push(0);
+  } else {
+    const v = resolveConst(item, equMap);
+    if (size === 1) bytes.push(v & 0xFF);
+    else { bytes.push(v & 0xFF); bytes.push((v >> 8) & 0xFF); }
+  }
+}
+
 function parseDataDecl(nameOpt, directive, rest, dataMap, memInit, cursorRef, equMap) {
   const size = directive.toUpperCase() === 'DB' ? 1 : 2;
   const items = splitArgs(rest);
   const startAddr = cursorRef.addr;
   let bytes = [];
-  for (let item of items) {
-    item = item.trim();
-    let m;
-    if ((m = /^(.+?)\s*DUP\s*\((.*)\)$/i.exec(item))) {
-      const count = resolveConst(m[1], equMap);
-      const inner = m[2].trim();
-      for (let i = 0; i < count; i++) {
-        if (inner === '?') { for (let k = 0; k < size; k++) bytes.push(0); }
-        else {
-          const v = resolveConst(inner, equMap);
-          if (size === 1) bytes.push(v & 0xFF);
-          else { bytes.push(v & 0xFF); bytes.push((v >> 8) & 0xFF); }
-        }
-      }
-    } else if (/^".*"$/.test(item) || /^'.*'$/.test(item)) {
-      const str = item.slice(1, -1);
-      for (const ch of str) {
-        bytes.push(ch.charCodeAt(0) & 0xFF);
-        if (size === 2) bytes.push(0);
-      }
-    } else if (item === '?') {
-      for (let k = 0; k < size; k++) bytes.push(0);
-    } else {
-      const v = resolveConst(item, equMap);
-      if (size === 1) bytes.push(v & 0xFF);
-      else { bytes.push(v & 0xFF); bytes.push((v >> 8) & 0xFF); }
-    }
-  }
+  for (const item of items) appendDataItem(item, size, bytes, equMap);
   if (bytes.length === 0) bytes = [0];
   for (let i = 0; i < bytes.length; i++) memInit.push({ addr: (startAddr + i) & 0xFFFF, val: bytes[i] });
   const totalLen = bytes.length;
@@ -606,6 +616,17 @@ function parseOperand(raw, ctx) {
     if (addr === null) throw new AsmError('Unknown variable: ' + name);
     return { type: 'imm', value: addr, size: 2, text: raw };
   }
+  // MASM's predefined group-name constants — the manual equivalent of this simulator's own
+  // auto-inserted startup prologue: "MOV AX, @data" / "MOV DS, AX" is the classic explicit
+  // way of loading DS with the real data segment, so @data must resolve to that same
+  // computed value (segs.ds), not fail as an unknown symbol.
+  {
+    const upS = s.toUpperCase();
+    if (ctx.segs && (upS === '@DATA' || upS === '@DATA?' || upS === '@CODE' || upS === '@STACK' || upS === '@FARDATA')) {
+      const val = (upS === '@CODE') ? ctx.segs.cs : (upS === '@STACK') ? ctx.segs.ss : ctx.segs.ds;
+      return { type: 'imm', value: val, size: 2, text: raw };
+    }
+  }
   // bracket / indirect
   if ((m = /^([A-Za-z_][A-Za-z0-9_]*)?\s*\[([^\]]*)\]$/.exec(s))) {
     const varName = m[1];
@@ -623,14 +644,27 @@ function parseOperand(raw, ctx) {
       if (['BX', 'BP', 'SI', 'DI'].includes(up)) {
         regs.push({ reg: up, sign: t.sign });
         if (up === 'BP') usesBP = true;
-      } else {
-        const num = tryParseNumber(t.term) ?? (ctx.equMap[up] !== undefined ? ctx.equMap[up] : null);
-        if (num === null) throw new AsmError('Bad address expression: ' + inner);
-        baseAddr += t.sign * num;
+        continue;
       }
+      const num = tryParseNumber(t.term);
+      if (num !== null) { baseAddr += t.sign * num; continue; }
+      if (ctx.equMap[up] !== undefined) { baseAddr += t.sign * ctx.equMap[up]; continue; }
+      // A bare variable name used inside brackets with no index register at all — e.g.
+      // "[cnt]" — is just another way of writing plain direct addressing ("cnt"); resolve
+      // it the same way, including picking up its declared DB/DW size.
+      const varAddr = resolveDataAddress(t.term, ctx);
+      if (varAddr !== null) {
+        baseAddr += t.sign * varAddr;
+        if (!sizeOverride) sizeOverride = ctx.dataMap[up].size;
+        continue;
+      }
+      throw new AsmError('Bad address expression: ' + inner);
     }
     return {
-      type: 'mem', size: sizeOverride || 2, text: raw, seg: usesBP ? 'SS' : 'DS',
+      // No BYTE/WORD PTR and no named variable to size it from (e.g. plain "[SI]") leaves
+      // the size unresolved here — assemble() below fills it in from a sibling operand
+      // (e.g. the AL in "MOV [SI], AL"), exactly like a real assembler disambiguates it.
+      type: 'mem', size: sizeOverride || null, text: raw, seg: usesBP ? 'SS' : 'DS',
       regs, baseAddr,
       calcAddress: (cpu) => {
         let addr = baseAddr;
@@ -644,22 +678,41 @@ function parseOperand(raw, ctx) {
     const up = s.toUpperCase();
     return { type: 'reg', name: up, size: isReg16(s) ? 2 : 1, text: raw };
   }
-  // direct data variable (optionally +/- offset)
+  // direct data variable (optionally +/- offset, and optionally +/- an index register too —
+  // e.g. "ctMarks+bx" is a bracket-less way of writing indexed addressing some emu8086
+  // programs use in place of "ctMarks[bx]" or "[ctMarks+bx]")
   if ((m = /^([A-Za-z_][A-Za-z0-9_]*)\s*([+\-].*)?$/.exec(s))) {
     const name = m[1];
     const info = ctx.dataMap[name.toUpperCase()];
     if (info) {
-      let disp = 0;
+      let disp = 0, regs = [], usesBP = false;
       if (m[2]) {
         const toks = tokenizeExpr(m[2]);
         for (const t of toks) {
-          const num = tryParseNumber(t.term) ?? ctx.equMap[t.term.toUpperCase()];
+          const up = t.term.toUpperCase();
+          if (['BX', 'BP', 'SI', 'DI'].includes(up)) {
+            regs.push({ reg: up, sign: t.sign });
+            if (up === 'BP') usesBP = true;
+            continue;
+          }
+          const num = tryParseNumber(t.term) ?? ctx.equMap[up];
           if (num === undefined || num === null) throw new AsmError('Bad expression: ' + raw);
           disp += t.sign * num;
         }
       }
-      const addr = (info.address + disp) & 0xFFFF;
-      return { type: 'mem', size: sizeOverride || info.size, text: raw, seg: 'DS', regs: [], baseAddr: addr, calcAddress: () => addr };
+      const baseAddr = (info.address + disp) & 0xFFFF;
+      if (regs.length === 0) {
+        return { type: 'mem', size: sizeOverride || info.size, text: raw, seg: 'DS', regs: [], baseAddr, calcAddress: () => baseAddr };
+      }
+      return {
+        type: 'mem', size: sizeOverride || info.size, text: raw, seg: usesBP ? 'SS' : 'DS',
+        regs, baseAddr,
+        calcAddress: (cpu) => {
+          let addr = baseAddr;
+          for (const r of regs) addr += r.sign * getReg(cpu, r.reg);
+          return addr & 0xFFFF;
+        }
+      };
     }
   }
   // immediate number / char / equ constant
@@ -841,6 +894,11 @@ function encodeNonJump(instr) {
     case 'CLC': return [0xF8]; case 'STC': return [0xF9]; case 'CMC': return [0xF5];
     case 'CLD': return [0xFC]; case 'STD': return [0xFD]; case 'CLI': return [0xFA]; case 'STI': return [0xFB];
     case 'INT': return [0xCD, a.value & 0xFF];
+    case 'MOVSB': return [0xA4]; case 'MOVSW': return [0xA5];
+    case 'CMPSB': return [0xA6]; case 'CMPSW': return [0xA7];
+    case 'STOSB': return [0xAA]; case 'STOSW': return [0xAB];
+    case 'LODSB': return [0xAC]; case 'LODSW': return [0xAD];
+    case 'SCASB': return [0xAE]; case 'SCASW': return [0xAF];
     default: return null; // jump-type (handled by jumpLen/encodeJumpAt) or unrecognized
   }
 }
@@ -949,6 +1007,15 @@ function assemble(source, opts) {
       continue;
     }
 
+    // NAME PROC [FAR|NEAR] / NAME ENDP — MASM's usual way of writing a procedure, with the
+    // name acting as a label even though there's no colon (unlike a bare "PROC"/"ENDP" with
+    // the label given separately via "name:" on its own line, handled further below).
+    let procm = /^([A-Za-z_][A-Za-z0-9_]*)\s+(PROC|ENDP)\b(.*)$/i.exec(line);
+    if (procm) {
+      codeLines.push({ label: procm[1], op: null, argsRaw: '', lineNo: ln, raw: rawLines[ln] });
+      continue;
+    }
+
     if (head === '.MODEL' || head === '.386' || head === '.8086' || head === 'ASSUME' || head === 'PAGE' || head === 'TITLE' || head === '.NOLIST' || head === '.LIST') {
       continue;
     }
@@ -1039,7 +1106,7 @@ function assemble(source, opts) {
     instructions.push(cl);
   }
 
-  const ctx = { dataMap, equMap, labels };
+  const ctx = { dataMap, equMap, labels, segs };
 
   // Parse operands for each instruction (control-flow ops keep raw label names)
   const JUMP_OPS = new Set(['JMP','JE','JZ','JNE','JNZ','JG','JNLE','JGE','JNL','JL','JNGE','JLE','JNG',
@@ -1051,6 +1118,7 @@ function assemble(source, opts) {
     'SHL','SAL','SHR','SAR','ROL','ROR','MUL','IMUL','DIV','IDIV','PUSH','POP','PUSHF','POPF',
     'CALL','RET','RETN','RETF','JMP','LOOP','LOOPE','LOOPZ','LOOPNE','LOOPNZ','NOP',
     'CLC','STC','CMC','CLD','STD','CLI','STI','INT',
+    'MOVSB','MOVSW','LODSB','LODSW','STOSB','STOSW','CMPSB','CMPSW','SCASB','SCASW',
     ...JUMP_OPS
   ]);
 
@@ -1077,6 +1145,26 @@ function assemble(source, opts) {
       }
     }
   }
+  // Resolve any indirect-memory operand whose size is still unknown (a bracket form with
+  // no named variable and no explicit BYTE/WORD PTR, e.g. plain "[SI]") from a sibling
+  // register operand in the same instruction — exactly how a real assembler disambiguates
+  // "MOV [SI], AL" as a byte access. Without this, such an operand would default to word
+  // width and a byte store like that would silently clobber the byte right after it.
+  for (const instr of instructions) {
+    const args = instr.args;
+    if (!args || args.length < 2) continue;
+    const known = args.find(a => a.type === 'reg' || (a.type === 'mem' && a.size));
+    if (!known) continue;
+    for (const a of args) {
+      if (a.type === 'mem' && !a.size) a.size = known.size;
+    }
+  }
+  // Any remaining unresolved size (a bracket mem operand with no sibling to infer from at
+  // all, e.g. a bare "INC [SI]") falls back to word width, same as before this fix.
+  for (const instr of instructions) {
+    for (const a of (instr.args || [])) { if (a.type === 'mem' && !a.size) a.size = 2; }
+  }
+
   // validate jump targets exist
   for (const instr of instructions) {
     if (instr.args[0] && instr.args[0].type === 'jlabel') {
@@ -1217,6 +1305,20 @@ function execStep(cpu, prog, io) {
       case 'STD': cpu.flags.DF = 1; break;
       case 'CLI': cpu.flags.IF = 0; break;
       case 'STI': cpu.flags.IF = 1; break;
+      // String instructions: SI/DI walk through DS:SI (source) and ES:DI (destination),
+      // stepping by the operand size (1 or 2) forward or backward depending on DF
+      // (CLD/STD) — exactly like real 8086. Only the single (non-REP-prefixed) forms are
+      // supported; wrap one of these in a loop yourself for a "REP" effect.
+      case 'LODSB': { const v = readSeg(cpu, 'DS', cpu.reg.SI, 1); cpu.reg.AX = (cpu.reg.AX & 0xFF00) | v; cpu.reg.SI = (cpu.reg.SI + (cpu.flags.DF ? -1 : 1)) & 0xFFFF; break; }
+      case 'LODSW': { const v = readSeg(cpu, 'DS', cpu.reg.SI, 2); cpu.reg.AX = v; cpu.reg.SI = (cpu.reg.SI + (cpu.flags.DF ? -2 : 2)) & 0xFFFF; break; }
+      case 'STOSB': { writeSeg(cpu, 'ES', cpu.reg.DI, 1, cpu.reg.AX & 0xFF); cpu.reg.DI = (cpu.reg.DI + (cpu.flags.DF ? -1 : 1)) & 0xFFFF; break; }
+      case 'STOSW': { writeSeg(cpu, 'ES', cpu.reg.DI, 2, cpu.reg.AX); cpu.reg.DI = (cpu.reg.DI + (cpu.flags.DF ? -2 : 2)) & 0xFFFF; break; }
+      case 'MOVSB': { const v = readSeg(cpu, 'DS', cpu.reg.SI, 1); writeSeg(cpu, 'ES', cpu.reg.DI, 1, v); const d = cpu.flags.DF ? -1 : 1; cpu.reg.SI = (cpu.reg.SI + d) & 0xFFFF; cpu.reg.DI = (cpu.reg.DI + d) & 0xFFFF; break; }
+      case 'MOVSW': { const v = readSeg(cpu, 'DS', cpu.reg.SI, 2); writeSeg(cpu, 'ES', cpu.reg.DI, 2, v); const d = cpu.flags.DF ? -2 : 2; cpu.reg.SI = (cpu.reg.SI + d) & 0xFFFF; cpu.reg.DI = (cpu.reg.DI + d) & 0xFFFF; break; }
+      case 'CMPSB': { const a = readSeg(cpu, 'DS', cpu.reg.SI, 1), b = readSeg(cpu, 'ES', cpu.reg.DI, 1); const res = updateFlagsSub(cpu, a, b, a - b, 1); setAlu(cpu, instr, 1, a, b, res); const d = cpu.flags.DF ? -1 : 1; cpu.reg.SI = (cpu.reg.SI + d) & 0xFFFF; cpu.reg.DI = (cpu.reg.DI + d) & 0xFFFF; break; }
+      case 'CMPSW': { const a = readSeg(cpu, 'DS', cpu.reg.SI, 2), b = readSeg(cpu, 'ES', cpu.reg.DI, 2); const res = updateFlagsSub(cpu, a, b, a - b, 2); setAlu(cpu, instr, 2, a, b, res); const d = cpu.flags.DF ? -2 : 2; cpu.reg.SI = (cpu.reg.SI + d) & 0xFFFF; cpu.reg.DI = (cpu.reg.DI + d) & 0xFFFF; break; }
+      case 'SCASB': { const a = cpu.reg.AX & 0xFF, b = readSeg(cpu, 'ES', cpu.reg.DI, 1); const res = updateFlagsSub(cpu, a, b, a - b, 1); setAlu(cpu, instr, 1, a, b, res); cpu.reg.DI = (cpu.reg.DI + (cpu.flags.DF ? -1 : 1)) & 0xFFFF; break; }
+      case 'SCASW': { const a = cpu.reg.AX, b = readSeg(cpu, 'ES', cpu.reg.DI, 2); const res = updateFlagsSub(cpu, a, b, a - b, 2); setAlu(cpu, instr, 2, a, b, res); cpu.reg.DI = (cpu.reg.DI + (cpu.flags.DF ? -2 : 2)) & 0xFFFF; break; }
       case 'INT': {
         const num = getValue(args[0], cpu) & 0xFF;
         doInterrupt(cpu, num, io);
@@ -1450,8 +1552,13 @@ function doInterrupt(cpu, num, io) {
     output: (s) => { cpu.output += s; },
     charIn: () => {
       const buf = $('stdinBuf').value;
-      if (cpu.inputPos < buf.length) return buf.charCodeAt(cpu.inputPos++);
-      return 0;
+      if (cpu.inputPos >= buf.length) return 0;
+      const code = buf.charCodeAt(cpu.inputPos++);
+      // The stdin box is a <textarea> so it can hold a real Enter keypress at all (a plain
+      // <input> silently strips \r/\n on assignment, which made "press Enter to stop"-style
+      // programs read forever) — a textarea normalizes that keypress to a bare "\n" (10),
+      // so translate it to the CR (13) real DOS console input actually delivers for Enter.
+      return code === 10 ? 13 : code;
     },
     log: (s) => { /* console.debug(s); */ }
   };
