@@ -19,6 +19,10 @@
 
   header{background:var(--panel2);border-bottom:1px solid var(--border);padding:8px 12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
   header h1{font-size:15px;margin:0;color:var(--accent);letter-spacing:.5px;white-space:nowrap;}
+  .titleBlock{display:flex;flex-direction:column;gap:2px;}
+  .credit{font-size:10px;color:var(--dim);white-space:nowrap;}
+  .credit a{color:var(--accent);text-decoration:none;}
+  .credit a:hover{text-decoration:underline;}
   .tabs{display:flex;gap:4px;}
   .tabbtn{background:transparent;border:1px solid var(--border);color:var(--dim);padding:6px 14px;border-radius:5px 5px 0 0;font-size:12px;}
   .tabbtn.active{background:var(--panel);color:var(--accent);border-bottom:1px solid var(--panel);}
@@ -142,7 +146,10 @@
 <body>
 <div id="app">
   <header>
-    <h1>&#9670; 8086 Web Emulator</h1>
+    <div class="titleBlock">
+      <h1>&#9670; 8086 Web Emulator</h1>
+      <div class="credit">Prompted by <a href="https://abduzzami.netlify.app/" target="_blank" rel="noopener noreferrer">Abduz Zami</a> developed by <a href="https://claude.ai" target="_blank" rel="noopener noreferrer">Claude</a></div>
+    </div>
     <div class="tabs">
       <button class="tabbtn active" data-view="editorView">Editor</button>
       <button class="tabbtn" data-view="emuView">Emulator</button>
