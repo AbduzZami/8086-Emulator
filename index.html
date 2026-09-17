@@ -141,6 +141,28 @@
     #emuView{flex-wrap:wrap;overflow:auto;}
     .colLeft,.colMid,.colRight{width:100%;flex:none;border-right:none;border-bottom:1px solid var(--border);}
   }
+
+  /* ---------- ASCII CODES WINDOW ---------- */
+  .modalOverlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;
+    align-items:center;justify-content:center;z-index:1000;}
+  .modalOverlay.hidden{display:none;}
+  .asciiWin{background:var(--panel);color:var(--text);border:1px solid var(--border);
+    box-shadow:0 10px 34px rgba(0,0,0,.55);width:660px;max-width:95vw;max-height:90vh;
+    display:flex;flex-direction:column;font-family:var(--mono);border-radius:6px;overflow:hidden;}
+  .asciiTitlebar{background:var(--panel2);color:var(--accent);border-bottom:1px solid var(--border);
+    padding:8px 8px 8px 12px;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:bold;
+    letter-spacing:.3px;}
+  .asciiTitlebar .icon{font-size:13px;}
+  .asciiTitlebar .title{flex:1;}
+  .asciiCloseBtn{background:var(--danger);color:#fff;border:1px solid var(--danger);width:22px;height:20px;
+    font-size:13px;line-height:1;border-radius:4px;padding:0;font-family:inherit;}
+  .asciiCloseBtn:hover{opacity:.85;}
+  .asciiBody{overflow:auto;background:var(--bg);padding:10px 12px;}
+  .asciiGrid{display:grid;grid-template-rows:repeat(32,auto);grid-auto-flow:column;
+    grid-template-columns:repeat(8,auto);column-gap:14px;font-size:12px;line-height:1.6;}
+  .asciiCell{white-space:nowrap;color:var(--text);}
+  .asciiCell .idx{color:var(--dim);}
+  .asciiCell .named{color:var(--accent2);font-weight:bold;}
 </style>
 </head>
 <body>
@@ -162,6 +184,7 @@
       <input type="file" id="fileInput" accept=".asm,.txt" style="display:none">
       <button class="btn" id="btnAssemble">Assemble</button>
       <button class="btn primary" id="btnRun">Run &#9654;</button>
+      <button class="btn" id="btnAscii">ASCII Table</button>
     </div>
   </header>
 
@@ -283,6 +306,19 @@
   <div class="statusbar">
     <span id="statusLeft">Idle</span>
     <span id="statusRight"></span>
+  </div>
+</div>
+
+<div class="modalOverlay hidden" id="asciiModal">
+  <div class="asciiWin">
+    <div class="asciiTitlebar">
+      <span class="icon">&#9670;</span>
+      <span class="title">ascii codes</span>
+      <button class="asciiCloseBtn" id="asciiCloseBtn">&times;</button>
+    </div>
+    <div class="asciiBody">
+      <div class="asciiGrid" id="asciiGrid"></div>
+    </div>
   </div>
 </div>
 
@@ -1391,6 +1427,7 @@ function doInterrupt(cpu, num, io) {
     if (ah === 0x0E) io.output(String.fromCharCode(cpu.reg.AX & 0xFF));
   }
 }
+
 /* ============================================================
    UI layer — wires the engine (assemble/CPU/execStep) to the DOM
    ============================================================ */
@@ -2090,7 +2127,62 @@ function doInterrupt(cpu, num, io) {
   buildSourceView();
 
   setConsole('Ready. A Hello World example is loaded — click Assemble or Run.', '');
+
+  /* ---------------- ASCII codes window (code page 437, like real emu8086) ---------------- */
+  (function () {
+    // codes with a short mnemonic label instead of a glyph (matches real emu8086's table)
+    const NAMED = {
+      0: 'null', 7: 'beep', 8: 'back', 9: 'tab', 10: 'newl', 13: 'cret', 32: 'spa', 255: 'res'
+    };
+    // CP437 (OEM-US) code page: control-range decorative glyphs + high-bit extended chars,
+    // used by real DOS / emu8086 for everything that isn't a plain printable ASCII char.
+    const CP437_HIGH = [
+      'Ç','ü','é','â','ä','à','å','ç','ê','ë','è','ï','î','ì','Ä','Å',
+      'É','æ','Æ','ô','ö','ò','û','ù','ÿ','Ö','Ü','¢','£','¥','₧','ƒ',
+      'á','í','ó','ú','ñ','Ñ','ª','º','¿','⌐','¬','½','¼','¡','«','»',
+      '░','▒','▓','│','┤','╡','╢','╖','╕','╣','║','╗','╝','╜','╛','┐',
+      '└','┴','┬','├','─','┼','╞','╟','╚','╔','╩','╦','╠','═','╬','╧',
+      '╨','╤','╥','╙','╘','╒','╓','╫','╪','┘','┌','█','▄','▌','▐','▀',
+      'α','ß','Γ','π','Σ','σ','µ','τ','Φ','Θ','Ω','δ','∞','φ','ε','∩',
+      '≡','±','≥','≤','⌠','⌡','÷','≈','°','∙','·','√','ⁿ','²','■',' '
+    ];
+    const CP437_LOW = [
+      ' ','☺','☻','♥','♦','♣','♠','•','◘','○','◙','♂','♀','♪','♫','☼',
+      '►','◄','↕','‼','¶','§','▬','↨','↑','↓','→','←','∟','↔','▲','▼'
+    ];
+    function glyphFor(code) {
+      if (code < 32) return CP437_LOW[code];
+      if (code === 127) return '⌂';
+      if (code >= 32 && code <= 126) return String.fromCharCode(code);
+      return CP437_HIGH[code - 128];
+    }
+    function buildAsciiGrid() {
+      const grid = $('asciiGrid');
+      if (!grid || grid.childElementCount) return; // build once
+      let html = '';
+      for (let code = 0; code <= 255; code++) {
+        const idx = String(code).padStart(3, '0');
+        if (NAMED[code] !== undefined) {
+          html += '<div class="asciiCell"><span class="idx">' + idx + ': </span><span class="named">' + NAMED[code] + '</span></div>';
+        } else {
+          html += '<div class="asciiCell"><span class="idx">' + idx + ': </span>' + escapeHtml(glyphFor(code)) + '</div>';
+        }
+      }
+      grid.innerHTML = html;
+    }
+    const asciiModal = $('asciiModal');
+    $('btnAscii').addEventListener('click', () => {
+      buildAsciiGrid();
+      asciiModal.classList.remove('hidden');
+    });
+    $('asciiCloseBtn').addEventListener('click', () => asciiModal.classList.add('hidden'));
+    asciiModal.addEventListener('click', (e) => { if (e.target === asciiModal) asciiModal.classList.add('hidden'); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !asciiModal.classList.contains('hidden')) asciiModal.classList.add('hidden');
+    });
+  })();
 })();
+
 
 </script>
 </body>
