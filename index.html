@@ -1444,7 +1444,8 @@ function doInterrupt(cpu, num, io) {
     "Factorial (n!)": `.MODEL small\n.STACK\n.DATA\nn      DW 5\nresult DW ?\n.CODE\nmov cx, n\nmov ax, 1\nfact_loop:\n    cmp cx, 1\n    jle fact_done\n    mul cx\n    dec cx\n    jmp fact_loop\nfact_done:\nmov result, ax\nmov ah, 4Ch\nint 21h\nEND\n`,
     "Max of Two Numbers": `.MODEL small\n.DATA\na    DW 7\nb    DW 12\nmaxv DW ?\n.CODE\nmov ax, a\nmov bx, b\ncmp ax, bx\njge is_max\nmov ax, bx\nis_max:\nmov maxv, ax\nmov ah, 4Ch\nint 21h\nEND\n`,
     "Print a Line of Stars": `.MODEL small\n.DATA\ncount DW 5\n.CODE\nmov cx, count\nstar_loop:\n    mov dl, '*'\n    mov ah, 02h\n    int 21h\n    loop star_loop\nmov ah, 4Ch\nint 21h\nEND\n`,
-    "Read a Character (INT 21h/01h)": `.MODEL small\n.DATA\nmsg1 db "Type a character: $"\nmsg2 db 13,10,"You typed: $"\n.CODE\nmov ah, 09h\nmov dx, offset msg1\nint 21h\nmov ah, 01h\nint 21h\nmov bl, al\nmov ah, 09h\nmov dx, offset msg2\nint 21h\nmov dl, bl\nmov ah, 02h\nint 21h\nmov ah, 4Ch\nint 21h\nEND\n`
+    "Read a Character (INT 21h/01h)": `.MODEL small\n.DATA\nmsg1 db "Type a character: $"\nmsg2 db 13,10,"You typed: $"\n.CODE\nmov ah, 09h\nmov dx, offset msg1\nint 21h\nmov ah, 01h\nint 21h\nmov bl, al\nmov ah, 09h\nmov dx, offset msg2\nint 21h\nmov dl, bl\nmov ah, 02h\nint 21h\nmov ah, 4Ch\nint 21h\nEND\n`,
+    "Manual Stack Setup (SS/SP)": `; SS and SP have no fixed/default value on a real 8086 -- the programmer (or the\n; loader) sets them explicitly. This bypasses .STACK entirely and picks our own\n; 256-byte stack at segment 1000h, the way real 8086 code commonly does:\n;   MOV AX,1000h / MOV SS,AX   -- stack segment base\n;   MOV SP,0100h               -- SP = top of a 256-byte stack (grows downward)\n; Step through this in the Emulator tab and watch SS/SP and the Memory tab's\n; Stack view update live.\n.MODEL small\n.CODE\nmov ax, 1000h\nmov ss, ax\nmov sp, 0100h\nmov bx, 1234h\npush bx        ; SP -> 00FEh, word 1234h stored at SS:00FEh\npop cx         ; SP -> 0100h again, CX = 1234h\nmov ah, 4Ch\nint 21h\nEND\n`
   };
 
   const exSel = $('examples');
@@ -2081,7 +2082,19 @@ function doInterrupt(cpu, num, io) {
   $('memStackBtn').addEventListener('click', () => {
     if (!cpu) return;
     memRefSeg = 'SS';
-    gotoMemAddr(physFromSeg(cpu, 'SS', cpu.reg.SP));
+    // Always show and select the real, current SP — exactly the value the Registers panel
+    // shows — rather than adjusting it. On a completely untouched stack this can coincide
+    // with the very first byte of the next segment (DS), since SP's initial value is one byte
+    // PAST the stack's last reserved byte; that's a genuine, correct consequence of real-mode
+    // segments sitting immediately next to each other in physical memory (verified earlier
+    // against this simulator's own segment math), not an error, so it's shown as-is rather
+    // than silently nudged.
+    const target = physFromSeg(cpu, 'SS', cpu.reg.SP);
+    // Show the 256-byte page that contains SP, wherever it is, rather than assuming the stack
+    // always starts at SS:0000 — a manually set-up stack (`MOV SS,ax` / `MOV SP,imm`; SS/SP
+    // have no fixed/default value architecturally) can be far larger than one page and sit
+    // anywhere in the segment.
+    gotoMemAddr(target - (target % MEM_WINDOW), target);
   });
   $('memPrevBtn').addEventListener('click', () => gotoMemAddr(clampMemStart(memViewAddr) - MEM_WINDOW));
   $('memNextBtn').addEventListener('click', () => gotoMemAddr(clampMemStart(memViewAddr) + MEM_WINDOW));
